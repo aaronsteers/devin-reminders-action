@@ -86,9 +86,26 @@ runs:
 
         echo "artifact_name=devin-reminders-list" | tee -a "$GITHUB_OUTPUT"
 
-        echo "reminder_message=${INPUT_REMINDER_MESSAGE}" | tee -a "$GITHUB_OUTPUT"
-        echo "agent_session_url=${INPUT_AGENT_SESSION_URL}" | tee -a "$GITHUB_OUTPUT"
-        echo "human_user=${INPUT_HUMAN_USER}" | tee -a "$GITHUB_OUTPUT"
+        echo "reminder_message: ${INPUT_REMINDER_MESSAGE}"
+        {
+          echo "reminder_message<<GHEOF"
+          echo "${INPUT_REMINDER_MESSAGE}"
+          echo "GHEOF"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "agent_session_url: ${INPUT_AGENT_SESSION_URL}"
+        {
+          echo "agent_session_url<<GHEOF"
+          echo "${INPUT_AGENT_SESSION_URL}"
+          echo "GHEOF"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "human_user: ${INPUT_HUMAN_USER}"
+        {
+          echo "human_user<<GHEOF"
+          echo "${INPUT_HUMAN_USER}"
+          echo "GHEOF"
+        } >> "$GITHUB_OUTPUT"
 
         if [ -n "${INPUT_AGENT_SESSION_URL}" ]; then
           SESSION_ID="$(echo "${INPUT_AGENT_SESSION_URL}" | sed -E 's#.*/sessions/([^/?]+).*#\1#')"
@@ -328,7 +345,7 @@ runs:
         echo "fired_count=${FIRED_COUNT}" | tee -a "$GITHUB_OUTPUT"
 
     - name: Slack notification (cron)
-      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && inputs.slack-channel != ''
+      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && steps.cron.outputs.fired_count != '' && inputs.slack-channel != ''
       shell: bash
       env:
         DUE_JSON: ${{ steps.list.outputs.due_json }}
@@ -372,7 +389,7 @@ runs:
 
     - name: Pop fired reminders (cron)
       id: pop
-      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0'
+      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && steps.cron.outputs.fired_count != ''
       shell: bash
       env:
         CURRENT_JSON: ${{ steps.list.outputs.reminders_json }}
@@ -392,7 +409,7 @@ runs:
         echo "remaining_count=${TOTAL}" | tee -a "$GITHUB_OUTPUT"
 
     - name: Upload reminders artifact (cron pop)
-      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0'
+      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && steps.cron.outputs.fired_count != ''
       uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.resolve.outputs.artifact_name }}
