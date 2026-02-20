@@ -59,6 +59,12 @@ outputs:
   item-guid:
     description: "GUID of the newly added reminder (only set for put action)"
     value: ${{ steps.resolve.outputs.item_guid }}
+  due-guids:
+    description: "Newline-delimited list of GUIDs for due reminders"
+    value: ${{ steps.list.outputs.due_guids }}
+  popped-count:
+    description: "Number of reminders removed after cron firing"
+    value: ${{ steps.pop.outputs.popped_count }}
 
 runs:
   using: "composite"
@@ -195,6 +201,14 @@ runs:
         echo "reminders_json=$(echo "${REMINDERS}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
         echo "due_json=$(echo "${DUE}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
 
+        {
+          echo "due_guids<<GHEOF"
+          echo "${DUE}" | jq -r '.[].guid'
+          echo "GHEOF"
+        } >> "$GITHUB_OUTPUT"
+
+    # --- PUT steps ---
+
     - name: Build updated reminders list (put)
       id: put-build
       if: steps.resolve.outputs.is_put == 'true'
@@ -289,6 +303,8 @@ runs:
         echo "  guid: ${ITEM_GUID}"
         echo "  remind_at: ${REMIND_AT}"
         echo "  total reminders: ${TOTAL}"
+
+    # --- CRON steps ---
 
     - name: Process due reminders (cron)
       id: cron
@@ -430,8 +446,10 @@ runs:
         echo "Remaining list:"
         cat /tmp/reminders-upload/reminders.json
 
-        TOTAL="$(echo "${REMAINING}" | jq 'length')"
-        echo "remaining_count=${TOTAL}" | tee -a "$GITHUB_OUTPUT"
+        REMAINING_COUNT="$(echo "${REMAINING}" | jq 'length')"
+        POPPED_COUNT="$(echo "${FIRED_GUIDS}" | jq 'length')"
+        echo "remaining_count=${REMAINING_COUNT}" | tee -a "$GITHUB_OUTPUT"
+        echo "popped_count=${POPPED_COUNT}" | tee -a "$GITHUB_OUTPUT"
 
     - name: Upload reminders artifact (cron pop)
       if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && steps.cron.outputs.fired_count != ''
