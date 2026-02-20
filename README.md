@@ -47,6 +47,7 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
     remind-at: "2026-02-20T17:00:00-08:00"
     reminder-message: "Check on the deployment status"
     agent-session-url: "https://app.devin.ai/sessions/abc123"
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
     slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
     slack-channel: devin-reminders
     reminder-timezone: America/Los_Angeles
@@ -59,6 +60,7 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
   id: reminders
   with:
     action: list
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
 
 - run: echo "Due: ${{ steps.reminders.outputs.due-count }} / Total: ${{ steps.reminders.outputs.total-count }}"
 ```
