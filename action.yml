@@ -26,10 +26,6 @@ inputs:
       Example: '<@U12345>, <@U67890>' or '@alice, @bob'.
       Only used when slack-channel is set.
     required: false
-  human-user:
-    description: >
-      Deprecated alias for slack-users-cc.
-    required: false
   devin-token:
     description: "Devin API Token (required for authentication when firing reminders)."
     required: true
@@ -84,7 +80,6 @@ runs:
         INPUT_REMINDER_MESSAGE: ${{ inputs.reminder-message }}
         INPUT_AGENT_SESSION_URL: ${{ inputs.agent-session-url }}
         INPUT_SLACK_USERS_CC: ${{ inputs.slack-users-cc }}
-        INPUT_HUMAN_USER: ${{ inputs.human-user }}
         INPUT_TIMEZONE: ${{ inputs.reminder-timezone }}
       run: |
         set -euo pipefail
@@ -110,12 +105,7 @@ runs:
           echo "GHEOF"
         } >> "$GITHUB_OUTPUT"
 
-        CC_RAW="${INPUT_SLACK_USERS_CC}"
-        if [ -z "${CC_RAW}" ]; then
-          CC_RAW="${INPUT_HUMAN_USER}"
-        fi
-
-        SLACK_USERS_CC="$(echo "${CC_RAW}" | tr '\n' ',' | sed 's/,\+/, /g; s/^[, ]\+//; s/[, ]\+$//')"
+        SLACK_USERS_CC="$(echo "${INPUT_SLACK_USERS_CC}" | tr '\n' ',' | sed 's/,\+/, /g; s/^[, ]\+//; s/[, ]\+$//')"
         echo "slack_users_cc=${SLACK_USERS_CC}" | tee -a "$GITHUB_OUTPUT"
 
         if [ -n "${INPUT_AGENT_SESSION_URL}" ]; then
@@ -399,7 +389,7 @@ runs:
 
           MSG="$(echo "${ITEM}" | jq -r '.reminder_message')"
           SESSION_URL="$(echo "${ITEM}" | jq -r '.agent_session_url')"
-          SLACK_CC="$(echo "${ITEM}" | jq -r '.slack_users_cc // .human_user // empty')"
+          SLACK_CC="$(echo "${ITEM}" | jq -r '.slack_users_cc // empty')"
           SID_SHORT="$(echo "${ITEM}" | jq -r '.session_id_short // empty')"
           if [ -z "${SID_SHORT}" ]; then
             SESSION_ID="$(echo "${SESSION_URL}" | sed -E 's#.*/sessions/([^/?]+).*#\1#')"
