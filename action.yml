@@ -31,8 +31,8 @@ inputs:
       Example: '["guid1", "guid2"]'
     required: false
   devin-token:
-    description: "Devin API Token. Not used by this action directly but may be required by callers using devin-action."
-    required: false
+    description: "Devin API Token (required for authentication when firing reminders)."
+    required: true
   slack-token:
     description: "Slack bot token for posting notifications. Only needed if slack-channel is set."
     required: false
