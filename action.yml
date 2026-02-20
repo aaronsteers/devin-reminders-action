@@ -6,7 +6,7 @@ branding:
 
 inputs:
   action:
-    description: "Action to perform: put, list, cron, or pop"
+    description: "Action to perform: put, list, or cron"
     required: true
   remind-at:
     description: >
@@ -24,11 +24,6 @@ inputs:
     description: >
       Optional person identifier (email, GitHub handle, or Slack user ID)
       to CC on Slack notifications.
-    required: false
-  pop-guids:
-    description: >
-      JSON array of reminder GUIDs to remove (required for 'pop').
-      Example: '["guid1", "guid2"]'
     required: false
   devin-token:
     description: "Devin API Token (required for authentication when firing reminders)."
@@ -53,7 +48,7 @@ outputs:
     description: "JSON array of all current reminders"
     value: ${{ steps.list.outputs.reminders_json }}
   due-json:
-    description: "JSON array of reminders that are currently due (use as matrix input)"
+    description: "JSON array of reminders that are currently due"
     value: ${{ steps.list.outputs.due_json }}
   due-count:
     description: "Number of reminders currently due"
@@ -65,10 +60,10 @@ outputs:
     description: "GUID of the newly added reminder (only set for put action)"
     value: ${{ steps.resolve.outputs.item_guid }}
   due-guids:
-    description: "JSON array of GUIDs for due reminders (pass to pop-guids after firing)"
+    description: "Newline-delimited list of GUIDs for due reminders"
     value: ${{ steps.list.outputs.due_guids }}
   popped-count:
-    description: "Number of reminders removed (only set for pop action)"
+    description: "Number of reminders removed after cron firing"
     value: ${{ steps.pop.outputs.popped_count }}
 
 runs:
@@ -92,7 +87,6 @@ runs:
         echo "is_put=$( [ "${INPUT_ACTION}" = "put" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
         echo "is_list=$( [ "${INPUT_ACTION}" = "list" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
         echo "is_cron=$( [ "${INPUT_ACTION}" = "cron" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
-        echo "is_pop=$( [ "${INPUT_ACTION}" = "pop" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
 
         echo "artifact_name=devin-reminders-list" | tee -a "$GITHUB_OUTPUT"
 
@@ -174,18 +168,6 @@ runs:
 
         echo "Validation passed."
 
-    - name: Validate pop inputs
-      if: steps.resolve.outputs.is_pop == 'true'
-      shell: bash
-      env:
-        POP_GUIDS: ${{ inputs.pop-guids }}
-      run: |
-        set -euo pipefail
-
-        test -n "${POP_GUIDS}" || { echo "::error::pop-guids is required for pop"; exit 1; }
-        echo "${POP_GUIDS}" | jq empty 2>/dev/null || { echo "::error::pop-guids must be valid JSON"; exit 1; }
-        echo "Pop GUIDs: ${POP_GUIDS}"
-
     - name: Download reminders artifact
       id: download
       uses: dawidd6/action-download-artifact@v14
@@ -219,8 +201,11 @@ runs:
         echo "reminders_json=$(echo "${REMINDERS}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
         echo "due_json=$(echo "${DUE}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
 
-        DUE_GUIDS="$(echo "${DUE}" | jq -c '[.[].guid]')"
-        echo "due_guids=${DUE_GUIDS}" | tee -a "$GITHUB_OUTPUT"
+        {
+          echo "due_guids<<GHEOF"
+          echo "${DUE}" | jq -r '.[].guid'
+          echo "GHEOF"
+        } >> "$GITHUB_OUTPUT"
 
     # --- PUT steps ---
 
@@ -444,7 +429,7 @@ runs:
         done
 
     - name: Pop fired reminders (cron)
-      id: cron-pop
+      id: pop
       if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && steps.cron.outputs.fired_count != ''
       shell: bash
       env:
@@ -478,7 +463,7 @@ runs:
       shell: bash
       env:
         DUE_COUNT: ${{ steps.list.outputs.due_count }}
-        REMAINING: ${{ steps.cron-pop.outputs.remaining_count }}
+        REMAINING: ${{ steps.pop.outputs.remaining_count }}
       run: |
         if [ "${DUE_COUNT}" = "0" ]; then
           echo "No reminders are currently due."
@@ -486,104 +471,3 @@ runs:
           echo "Fired ${DUE_COUNT} reminder(s)."
           echo "Remaining: ${REMAINING:-0}"
         fi
-
-    # --- POP steps ---
-
-    - name: Pop reminders
-      id: pop
-      if: steps.resolve.outputs.is_pop == 'true'
-      shell: bash
-      env:
-        CURRENT_JSON: ${{ steps.list.outputs.reminders_json }}
-        POP_GUIDS: ${{ inputs.pop-guids }}
-      run: |
-        set -euo pipefail
-
-        REMAINING="$(echo "${CURRENT_JSON}" | jq -c --argjson guids "${POP_GUIDS}" '[.[] | select(.guid as $g | $guids | index($g) | not)]')"
-        POPPED="$(echo "${CURRENT_JSON}" | jq -c --argjson guids "${POP_GUIDS}" '[.[] | select(.guid as $g | $guids | index($g))]')"
-
-        mkdir -p /tmp/reminders-upload
-        echo "${REMAINING}" | jq . > /tmp/reminders-upload/reminders.json
-
-        echo "Popped items:"
-        echo "${POPPED}" | jq .
-
-        echo "Remaining list:"
-        cat /tmp/reminders-upload/reminders.json
-
-        POPPED_COUNT="$(echo "${POPPED}" | jq 'length')"
-        REMAINING_COUNT="$(echo "${REMAINING}" | jq 'length')"
-        echo "popped_count=${POPPED_COUNT}" | tee -a "$GITHUB_OUTPUT"
-        echo "remaining_count=${REMAINING_COUNT}" | tee -a "$GITHUB_OUTPUT"
-        echo "popped_json=$(echo "${POPPED}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
-
-    - name: Upload reminders artifact (pop)
-      if: steps.resolve.outputs.is_pop == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ steps.resolve.outputs.artifact_name }}
-        path: /tmp/reminders-upload/reminders.json
-        retention-days: 4
-        overwrite: true
-
-    - name: Slack notification (pop)
-      if: steps.resolve.outputs.is_pop == 'true' && steps.pop.outputs.popped_count != '0' && inputs.slack-channel != ''
-      shell: bash
-      env:
-        POPPED_JSON: ${{ steps.pop.outputs.popped_json }}
-        SLACK_TOKEN: ${{ inputs.slack-token }}
-        SLACK_CHANNEL: ${{ inputs.slack-channel }}
-      run: |
-        set -euo pipefail
-
-        POPPED_COUNT="$(echo "${POPPED_JSON}" | jq 'length')"
-
-        for i in $(seq 0 $(( POPPED_COUNT - 1 ))); do
-          ITEM="$(echo "${POPPED_JSON}" | jq -c ".[$i]")"
-          MSG="$(echo "${ITEM}" | jq -r '.reminder_message')"
-          SESSION_URL="$(echo "${ITEM}" | jq -r '.agent_session_url')"
-          HUMAN="$(echo "${ITEM}" | jq -r '.human_user // empty')"
-          SID_SHORT="$(echo "${ITEM}" | jq -r '.session_id_short // empty')"
-          if [ -z "${SID_SHORT}" ]; then
-            SESSION_ID="$(echo "${SESSION_URL}" | sed -E 's#.*/sessions/([^/?]+).*#\1#')"
-            SID_SHORT="${SESSION_ID:0:8}"
-          fi
-
-          CC_LINE=""
-          if [ -n "${HUMAN}" ]; then
-            CC_LINE="\nCC: ${HUMAN}"
-          fi
-
-          PAYLOAD="$(jq -n \
-            --arg channel "${SLACK_CHANNEL}" \
-            --arg msg "${MSG}" \
-            --arg url "${SESSION_URL}" \
-            --arg sid "${SID_SHORT}" \
-            --arg cc "${CC_LINE}" \
-            '{
-              channel: $channel,
-              unfurl_links: false,
-              unfurl_media: false,
-              blocks: [
-                {type: "section", text: {type: "mrkdwn", text: ":bell: Devin reminder delivered:"}},
-                {type: "section", text: {type: "mrkdwn", text: ("> *" + $msg + "*")}},
-                {type: "context", elements: [{type: "mrkdwn", text: ("Sent by <http://Devin.ai|Devin.ai> (No-Reply) from session <" + $url + "|" + $sid + ">." + $cc)}]}
-              ]
-            }')"
-
-          curl -sf -X POST \
-            -H "Authorization: Bearer ${SLACK_TOKEN}" \
-            -H "Content-Type: application/json; charset=utf-8" \
-            -d "${PAYLOAD}" \
-            "https://slack.com/api/chat.postMessage" > /dev/null || echo "::warning::Failed to send Slack notification for popped reminder"
-        done
-
-    - name: Print pop result
-      if: steps.resolve.outputs.is_pop == 'true'
-      shell: bash
-      env:
-        POPPED_COUNT: ${{ steps.pop.outputs.popped_count }}
-        REMAINING_COUNT: ${{ steps.pop.outputs.remaining_count }}
-      run: |
-        echo "Popped ${POPPED_COUNT} reminder(s)."
-        echo "Remaining: ${REMAINING_COUNT}"

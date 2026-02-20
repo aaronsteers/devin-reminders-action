@@ -7,7 +7,6 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 - Schedule reminders for existing Devin sessions (`put`)
 - List all pending reminders and filter due items (`list`)
 - Fire due reminders and clean up automatically (`cron`)
-- Standalone pop for removing reminders by GUID (`pop`)
 - Optional Slack notifications (opt-in via `slack-channel` input)
 - Timezone-aware display for notification messages
 
@@ -15,13 +14,12 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 
 | Name | Description | Required | Default |
 |------|-------------|----------|---------|
-| `action` | Action to perform: `put`, `list`, `cron`, or `pop` | Yes | |
+| `action` | Action to perform: `put`, `list`, or `cron` | Yes | |
 | `remind-at` | ISO 8601 timestamp with timezone offset for when the reminder fires. Must be in the future and no more than 3 days ahead. Required for `put`. | No | |
 | `reminder-message` | Message to deliver when the reminder fires. Required for `put`. | No | |
 | `agent-session-url` | Devin session URL to ping when the reminder fires. Required for `put`. | No | |
 | `human-user` | Person identifier (email, GitHub handle, or Slack user ID) to CC on notifications. | No | |
-| `pop-guids` | JSON array of reminder GUIDs to remove. Required for `pop`. | No | |
-| `devin-token` | Devin API token (required for firing reminders in `cron`). | Yes | |
+| `devin-token`| Devin API token (required for firing reminders in `cron`). | Yes | |
 | `slack-token` | Slack bot token. Only needed if `slack-channel` is set. | No | |
 | `slack-channel` | Slack channel name for notifications. Leave empty to skip Slack. | No | |
 | `reminder-timezone` | Timezone for displaying times in notifications. Accepts IANA names (e.g. `America/Los_Angeles`) or UTC offsets. Does not affect parsing of `remind-at`. | No | `UTC` |
@@ -31,12 +29,12 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 | Name | Description |
 |------|-------------|
 | `reminders-json` | JSON array of all current reminders |
-| `due-json` | JSON array of reminders that are currently due (use as matrix input) |
+| `due-json` | JSON array of reminders that are currently due |
 | `due-count` | Number of reminders currently due |
-| `due-guids` | JSON array of GUIDs for due reminders (pass to `pop-guids` after firing) |
+| `due-guids` | Newline-delimited list of GUIDs for due reminders |
 | `total-count` | Total number of reminders in the list |
 | `item-guid` | GUID of the newly added reminder (only for `put`) |
-| `popped-count` | Number of reminders removed (only for `pop`) |
+| `popped-count` | Number of reminders removed after cron firing |
 
 ## Usage
 
@@ -109,26 +107,11 @@ jobs:
           reminder-timezone: America/Los_Angeles
 ```
 
-### Pop Reminders by GUID
-
-The `pop` action can be used standalone to remove specific reminders:
-
-```yaml
-- uses: aaronsteers/devin-reminders-action@v1
-  with:
-    action: pop
-    pop-guids: '["guid1", "guid2"]'
-    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
-    slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
-    slack-channel: devin-reminders
-```
-
 ## How It Works
 
 1. **`put`** schedules a reminder by appending it to a JSON artifact
 2. **`list`** reads the artifact, filters due reminders, and outputs counts and JSON
 3. **`cron`** reads the artifact, fires each due reminder via the Devin API, pops successful ones, and uploads the updated artifact
-4. **`pop`** removes specific reminders by GUID from the artifact
 
 ## Storage Model
 
