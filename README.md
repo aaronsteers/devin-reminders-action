@@ -1,13 +1,13 @@
 # Devin Reminders Action
 
-A reusable GitHub Action for scheduling, listing, and firing reminders for [Devin.ai](https://devin.ai) sessions. Uses GitHub Actions artifacts for storage and [aaronsteers/devin-action](https://github.com/aaronsteers/devin-action) to deliver reminders via matrix jobs.
+A reusable GitHub Action for scheduling, listing, and firing reminders for [Devin.ai](https://devin.ai) sessions. Uses GitHub Actions artifacts for storage and the Devin API to deliver reminders.
 
 ## Features
 
 - Schedule reminders for existing Devin sessions (`put`)
-- List all pending reminders and filter due items (`list` / `cron`)
-- Pop fired reminders from the list (`pop`)
-- Matrix-compatible outputs for parallel reminder delivery via `devin-action`
+- List all pending reminders and filter due items (`list`)
+- Fire due reminders and clean up automatically (`cron`)
+- Standalone pop for removing reminders by GUID (`pop`)
 - Optional Slack notifications (opt-in via `slack-channel` input)
 - Timezone-aware display for notification messages
 
@@ -21,7 +21,7 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 | `agent-session-url` | Devin session URL to ping when the reminder fires. Required for `put`. | No | |
 | `human-user` | Person identifier (email, GitHub handle, or Slack user ID) to CC on notifications. | No | |
 | `pop-guids` | JSON array of reminder GUIDs to remove. Required for `pop`. | No | |
-| `devin-token` | Devin API token. Not used by this action directly but needed by callers using `devin-action`. | No | |
+| `devin-token` | Devin API token (required for firing reminders in `cron`). | Yes | |
 | `slack-token` | Slack bot token. Only needed if `slack-channel` is set. | No | |
 | `slack-channel` | Slack channel name for notifications. Leave empty to skip Slack. | No | |
 | `reminder-timezone` | Timezone for displaying times in notifications. Accepts IANA names (e.g. `America/Los_Angeles`) or UTC offsets. Does not affect parsing of `remind-at`. | No | `UTC` |
@@ -65,7 +65,7 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 - run: echo "Due: ${{ steps.reminders.outputs.due-count }} / Total: ${{ steps.reminders.outputs.total-count }}"
 ```
 
-### Full Workflow (Cron + Manual with Matrix)
+### Full Workflow (Cron + Manual)
 
 ```yaml
 name: Devin Reminders
@@ -76,7 +76,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "Action: put, list, cron, or pop"
+        description: "Action: put, list, or cron"
         required: true
         type: choice
         options: [put, list, cron]
@@ -94,65 +94,41 @@ permissions:
   actions: write
 
 jobs:
-  check-reminders:
+  reminders:
     runs-on: ubuntu-latest
-    outputs:
-      action: ${{ steps.resolve.outputs.action }}
-      due-json: ${{ steps.reminders.outputs.due-json }}
-      due-count: ${{ steps.reminders.outputs.due-count }}
-      due-guids: ${{ steps.reminders.outputs.due-guids }}
     steps:
-      - name: Resolve action
-        id: resolve
-        run: |
-          ACTION="${{ github.event_name == 'schedule' && 'cron' || inputs.action }}"
-          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
-
       - uses: aaronsteers/devin-reminders-action@v1
-        id: reminders
         with:
-          action: ${{ steps.resolve.outputs.action }}
+          action: ${{ github.event_name == 'schedule' && 'cron' || inputs.action }}
           remind-at: ${{ inputs.remind_at }}
           reminder-message: ${{ inputs.reminder_message }}
           agent-session-url: ${{ inputs.agent_session_url }}
+          devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
           slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
           slack-channel: devin-reminders
           reminder-timezone: America/Los_Angeles
+```
 
-  fire-reminders:
-    needs: check-reminders
-    if: needs.check-reminders.outputs.action == 'cron' && needs.check-reminders.outputs.due-count != '0'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        reminder: ${{ fromJson(needs.check-reminders.outputs.due-json) }}
-    steps:
-      - uses: aaronsteers/devin-action@v3
-        with:
-          reuse-session: ${{ matrix.reminder.agent_session_url }}
-          prompt: |
-            This is a scheduled reminder you set for yourself.
-            Reminder message: ${{ matrix.reminder.reminder_message }}
-          devin-api-token: ${{ secrets.DEVIN_AI_API_KEY }}
+### Pop Reminders by GUID
 
-  pop-reminders:
-    needs: [check-reminders, fire-reminders]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: aaronsteers/devin-reminders-action@v1
-        with:
-          action: pop
-          pop-guids: ${{ needs.check-reminders.outputs.due-guids }}
-          slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
-          slack-channel: devin-reminders
+The `pop` action can be used standalone to remove specific reminders:
+
+```yaml
+- uses: aaronsteers/devin-reminders-action@v1
+  with:
+    action: pop
+    pop-guids: '["guid1", "guid2"]'
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
+    slack-channel: devin-reminders
 ```
 
 ## How It Works
 
 1. **`put`** schedules a reminder by appending it to a JSON artifact
-2. **`list`** / **`cron`** reads the artifact, filters due reminders, and outputs them as matrix-compatible JSON
-3. The caller workflow fans out via `strategy.matrix` to fire each due reminder in parallel using [`aaronsteers/devin-action`](https://github.com/aaronsteers/devin-action) with `reuse-session`
-4. **`pop`** removes the fired reminders from the artifact after successful delivery
+2. **`list`** reads the artifact, filters due reminders, and outputs counts and JSON
+3. **`cron`** reads the artifact, fires each due reminder via the Devin API, pops successful ones, and uploads the updated artifact
+4. **`pop`** removes specific reminders by GUID from the artifact
 
 ## Storage Model
 
