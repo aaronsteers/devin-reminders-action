@@ -243,7 +243,19 @@ runs:
           channel: "${{ inputs.slack-channel }}"
           unfurl_links: false
           unfurl_media: false
-          text: "Reminder scheduled for ${{ steps.resolve.outputs.remind_at_display }}: ${{ steps.resolve.outputs.reminder_message }}\nSession: <${{ steps.resolve.outputs.agent_session_url }}|${{ steps.resolve.outputs.session_id_short }}>${{ steps.resolve.outputs.human_user != '' && format('\nCC: {0}', steps.resolve.outputs.human_user) || '' }}"
+          blocks:
+            - type: section
+              text:
+                type: mrkdwn
+                text: ":pushpin: New Devin reminder scheduled for `${{ steps.resolve.outputs.remind_at_display }}`:"
+            - type: section
+              text:
+                type: mrkdwn
+                text: "> *${{ steps.resolve.outputs.reminder_message }}*"
+            - type: context
+              elements:
+                - type: mrkdwn
+                  text: "Sent by <http://Devin.ai|Devin.ai> (No-Reply) from session <${{ steps.resolve.outputs.agent_session_url }}|${{ steps.resolve.outputs.session_id_short }}>.${{ steps.resolve.outputs.human_user != '' && format(' CC: {0}', steps.resolve.outputs.human_user) || '' }}"
 
     - name: Print put result
       if: steps.resolve.outputs.is_put == 'true'
@@ -353,7 +365,7 @@ runs:
 
           curl -sf -X POST \
             -H "Authorization: Bearer ${SLACK_TOKEN}" \
-            -H "Content-Type: application/json" \
+            -H "Content-Type: application/json; charset=utf-8" \
             -d "${PAYLOAD}" \
             "https://slack.com/api/chat.postMessage" > /dev/null || echo "::warning::Failed to send Slack notification for reminder ${GUID}"
         done
