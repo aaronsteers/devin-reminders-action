@@ -446,8 +446,10 @@ runs:
         echo "Remaining list:"
         cat /tmp/reminders-upload/reminders.json
 
-        TOTAL="$(echo "${REMAINING}" | jq 'length')"
-        echo "remaining_count=${TOTAL}" | tee -a "$GITHUB_OUTPUT"
+        REMAINING_COUNT="$(echo "${REMAINING}" | jq 'length')"
+        POPPED_COUNT="$(echo "${FIRED_GUIDS}" | jq 'length')"
+        echo "remaining_count=${REMAINING_COUNT}" | tee -a "$GITHUB_OUTPUT"
+        echo "popped_count=${POPPED_COUNT}" | tee -a "$GITHUB_OUTPUT"
 
     - name: Upload reminders artifact (cron pop)
       if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && steps.cron.outputs.fired_count != ''
