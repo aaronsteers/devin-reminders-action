@@ -20,8 +20,8 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 | `agent-session-url` | Devin session URL to ping when the reminder fires. Required for `put`. | No | |
 | `human-user` | Person identifier (email, GitHub handle, or Slack user ID) to CC on notifications. | No | |
 | `devin-token`| Devin API token. | Yes | |
-| `slack-token` | Slack bot token. Only needed if `slack-channel` is set. | No | |
 | `slack-channel` | Slack channel name for notifications. Leave empty to skip Slack. | No | |
+| `slack-token` | Slack bot token. Only needed if `slack-channel` is set. | No | |
 | `reminder-timezone` | Timezone for displaying times in notifications. Accepts IANA names (e.g. `America/Los_Angeles`) or UTC offsets. Does not affect parsing of `remind-at`. | No | `UTC` |
 
 ## Outputs
