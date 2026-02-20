@@ -1,0 +1,392 @@
+name: Devin Reminders Action
+description: |
+  Schedule, list, and fire reminders for Devin.ai sessions.
+  Stores reminders as GitHub Actions artifacts and fires them via aaronsteers/devin-action.
+branding:
+  icon: bell
+  color: purple
+
+inputs:
+  action:
+    description: "Action to perform: put, list, or cron"
+    required: true
+  remind-at:
+    description: >
+      ISO 8601 timestamp (with timezone offset) for when the reminder should fire.
+      Required for 'put'. Must be in the future and no more than 3 days ahead.
+      Example: 2026-02-20T17:00:00-08:00
+    required: false
+  reminder-message:
+    description: "Reminder message to deliver (required for 'put')."
+    required: false
+  agent-session-url:
+    description: "Devin session URL to ping when the reminder fires (required for 'put')."
+    required: false
+  human-user:
+    description: >
+      Optional person identifier (email, GitHub handle, or Slack user ID)
+      to CC on Slack notifications.
+    required: false
+  devin-token:
+    description: "Devin API Token (required for authentication when firing reminders)."
+    required: true
+  slack-token:
+    description: "Slack bot token for posting notifications. Only needed if slack-channel is set."
+    required: false
+  slack-channel:
+    description: "Slack channel name to post notifications to. Leave empty to skip Slack notifications."
+    required: false
+  reminder-timezone:
+    description: >
+      Timezone for displaying reminder times in notifications.
+      Accepts IANA timezone names (e.g. America/Los_Angeles) or UTC offsets (e.g. -08:00).
+      Does not affect parsing of remind-at (which must carry its own offset).
+      Defaults to UTC.
+    required: false
+    default: "UTC"
+
+outputs:
+  reminders-json:
+    description: "JSON array of all current reminders"
+    value: ${{ steps.list.outputs.reminders_json }}
+  due-json:
+    description: "JSON array of reminders that are currently due"
+    value: ${{ steps.list.outputs.due_json }}
+  due-count:
+    description: "Number of reminders currently due"
+    value: ${{ steps.list.outputs.due_count }}
+  total-count:
+    description: "Total number of reminders in the list"
+    value: ${{ steps.list.outputs.total_count }}
+  item-guid:
+    description: "GUID of the newly added reminder (only set for put action)"
+    value: ${{ steps.resolve.outputs.item_guid }}
+
+runs:
+  using: "composite"
+  steps:
+
+    - name: Resolve and validate inputs
+      id: resolve
+      shell: bash
+      env:
+        INPUT_ACTION: ${{ inputs.action }}
+        INPUT_REMIND_AT: ${{ inputs.remind-at }}
+        INPUT_REMINDER_MESSAGE: ${{ inputs.reminder-message }}
+        INPUT_AGENT_SESSION_URL: ${{ inputs.agent-session-url }}
+        INPUT_HUMAN_USER: ${{ inputs.human-user }}
+        INPUT_TIMEZONE: ${{ inputs.reminder-timezone }}
+      run: |
+        set -euo pipefail
+
+        echo "action=${INPUT_ACTION}" | tee -a "$GITHUB_OUTPUT"
+        echo "is_put=$( [ "${INPUT_ACTION}" = "put" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
+        echo "is_list=$( [ "${INPUT_ACTION}" = "list" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
+        echo "is_cron=$( [ "${INPUT_ACTION}" = "cron" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
+
+        echo "artifact_name=devin-reminders-list" | tee -a "$GITHUB_OUTPUT"
+
+        echo "reminder_message=${INPUT_REMINDER_MESSAGE}" | tee -a "$GITHUB_OUTPUT"
+        echo "agent_session_url=${INPUT_AGENT_SESSION_URL}" | tee -a "$GITHUB_OUTPUT"
+        echo "human_user=${INPUT_HUMAN_USER}" | tee -a "$GITHUB_OUTPUT"
+
+        if [ -n "${INPUT_AGENT_SESSION_URL}" ]; then
+          SESSION_ID="$(echo "${INPUT_AGENT_SESSION_URL}" | sed -E 's#.*/sessions/([^/?]+).*#\1#')"
+          echo "session_id_short=${SESSION_ID:0:8}" | tee -a "$GITHUB_OUTPUT"
+        else
+          echo "session_id_short=" | tee -a "$GITHUB_OUTPUT"
+        fi
+
+        NOW="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+        echo "now=${NOW}" | tee -a "$GITHUB_OUTPUT"
+
+        GUID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+        echo "item_guid=${GUID}" | tee -a "$GITHUB_OUTPUT"
+
+        if [ -n "${INPUT_REMIND_AT}" ]; then
+          REMIND_AT_UTC="$(date -u -d "${INPUT_REMIND_AT}" +%Y-%m-%dT%H:%M:%S+00:00)"
+          echo "remind_at=${REMIND_AT_UTC}" | tee -a "$GITHUB_OUTPUT"
+
+          REMIND_AT_DISPLAY="$(TZ="${INPUT_TIMEZONE}" date -d "${INPUT_REMIND_AT}" '+%Y-%m-%d %I:%M %p %Z')"
+          echo "remind_at_display=${REMIND_AT_DISPLAY}" | tee -a "$GITHUB_OUTPUT"
+        else
+          echo "remind_at=" | tee -a "$GITHUB_OUTPUT"
+          echo "remind_at_display=" | tee -a "$GITHUB_OUTPUT"
+        fi
+
+    - name: Validate put inputs
+      if: steps.resolve.outputs.is_put == 'true'
+      shell: bash
+      env:
+        REMIND_AT: ${{ steps.resolve.outputs.remind_at }}
+        NOW: ${{ steps.resolve.outputs.now }}
+        MESSAGE: ${{ steps.resolve.outputs.reminder_message }}
+        SESSION_URL: ${{ steps.resolve.outputs.agent_session_url }}
+      run: |
+        set -euo pipefail
+
+        echo "Validating put inputs..."
+
+        test -n "${MESSAGE}" || { echo "::error::reminder-message is required for put"; exit 1; }
+        test -n "${SESSION_URL}" || { echo "::error::agent-session-url is required for put"; exit 1; }
+        test -n "${REMIND_AT}" || { echo "::error::remind-at is required for put"; exit 1; }
+
+        NOW_EPOCH="$(date -u -d "${NOW}" +%s)"
+        REMIND_EPOCH="$(date -u -d "${REMIND_AT}" +%s)"
+        MAX_EPOCH=$(( NOW_EPOCH + 3 * 24 * 60 * 60 ))
+
+        if [ "${REMIND_EPOCH}" -le "${NOW_EPOCH}" ]; then
+          echo "::error::remind-at must be in the future"
+          exit 1
+        fi
+
+        if [ "${REMIND_EPOCH}" -gt "${MAX_EPOCH}" ]; then
+          echo "::error::remind-at must be no more than 3 days in the future"
+          exit 1
+        fi
+
+        echo "Validation passed."
+
+    - name: Download reminders artifact
+      id: download
+      uses: dawidd6/action-download-artifact@v14
+      with:
+        name: ${{ steps.resolve.outputs.artifact_name }}
+        search_artifacts: true
+        if_no_artifact_found: warn
+        path: /tmp/reminders-artifact
+
+    - name: Read and filter reminders
+      id: list
+      shell: bash
+      env:
+        NOW: ${{ steps.resolve.outputs.now }}
+      run: |
+        set -euo pipefail
+
+        FILE="/tmp/reminders-artifact/reminders.json"
+        echo "Current time: ${NOW}"
+
+        REMINDERS="[]"
+        test -f "${FILE}" && REMINDERS="$(cat "${FILE}")"
+
+        TOTAL="$(echo "${REMINDERS}" | jq 'length')"
+        echo "total_count=${TOTAL}" | tee -a "$GITHUB_OUTPUT"
+
+        DUE="$(echo "${REMINDERS}" | jq -c --arg now "${NOW}" '[.[] | select(.remind_at <= $now)]')"
+        DUE_COUNT="$(echo "${DUE}" | jq 'length')"
+        echo "due_count=${DUE_COUNT}" | tee -a "$GITHUB_OUTPUT"
+
+        echo "reminders_json=$(echo "${REMINDERS}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
+        echo "due_json=$(echo "${DUE}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Build updated reminders list (put)
+      id: put-build
+      if: steps.resolve.outputs.is_put == 'true'
+      shell: bash
+      env:
+        CURRENT_JSON: ${{ steps.list.outputs.reminders_json }}
+        ITEM_GUID: ${{ steps.resolve.outputs.item_guid }}
+        REMINDER_MESSAGE: ${{ steps.resolve.outputs.reminder_message }}
+        AGENT_SESSION_URL: ${{ steps.resolve.outputs.agent_session_url }}
+        REMIND_AT: ${{ steps.resolve.outputs.remind_at }}
+        HUMAN_USER: ${{ steps.resolve.outputs.human_user }}
+      run: |
+        set -euo pipefail
+
+        test -n "${CURRENT_JSON}" || CURRENT_JSON="[]"
+
+        NEW_ITEM="$(jq -n \
+          --arg guid "${ITEM_GUID}" \
+          --arg msg "${REMINDER_MESSAGE}" \
+          --arg url "${AGENT_SESSION_URL}" \
+          --arg remind "${REMIND_AT}" \
+          --arg human "${HUMAN_USER}" \
+          --arg created "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
+          '{
+            guid: $guid,
+            reminder_message: $msg,
+            agent_session_url: $url,
+            remind_at: $remind,
+            created_at: $created,
+            human_user: (if $human == "" then null else $human end)
+          }')"
+
+        UPDATED="$(echo "${CURRENT_JSON}" | jq -c --argjson item "${NEW_ITEM}" '. + [$item]')"
+
+        mkdir -p /tmp/reminders-upload
+        echo "${UPDATED}" | jq . > /tmp/reminders-upload/reminders.json
+
+        echo "Updated list:"
+        cat /tmp/reminders-upload/reminders.json
+
+        TOTAL="$(echo "${UPDATED}" | jq 'length')"
+        echo "total_count=${TOTAL}" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Upload reminders artifact (put)
+      if: steps.resolve.outputs.is_put == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.resolve.outputs.artifact_name }}
+        path: /tmp/reminders-upload/reminders.json
+        retention-days: 4
+        overwrite: true
+
+    - name: Slack notification (put)
+      if: steps.resolve.outputs.is_put == 'true' && inputs.slack-channel != ''
+      uses: slackapi/slack-github-action@v2
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack-token }}
+        errors: true
+        payload: |
+          channel: "${{ inputs.slack-channel }}"
+          unfurl_links: false
+          unfurl_media: false
+          text: "Reminder scheduled for ${{ steps.resolve.outputs.remind_at_display }}: ${{ steps.resolve.outputs.reminder_message }}\nSession: <${{ steps.resolve.outputs.agent_session_url }}|${{ steps.resolve.outputs.session_id_short }}>"
+
+    - name: Print put result
+      if: steps.resolve.outputs.is_put == 'true'
+      shell: bash
+      env:
+        ITEM_GUID: ${{ steps.resolve.outputs.item_guid }}
+        REMIND_AT: ${{ steps.resolve.outputs.remind_at }}
+        TOTAL: ${{ steps.put-build.outputs.total_count }}
+      run: |
+        echo "Reminder added successfully."
+        echo "  guid: ${ITEM_GUID}"
+        echo "  remind_at: ${REMIND_AT}"
+        echo "  total reminders: ${TOTAL}"
+
+    - name: Process due reminders (cron)
+      id: cron
+      if: steps.resolve.outputs.is_cron == 'true' && steps.list.outputs.due_count != '0'
+      shell: bash
+      env:
+        DUE_JSON: ${{ steps.list.outputs.due_json }}
+        DEVIN_TOKEN: ${{ inputs.devin-token }}
+      run: |
+        set -euo pipefail
+
+        DUE_COUNT="$(echo "${DUE_JSON}" | jq 'length')"
+        echo "Processing ${DUE_COUNT} due reminder(s)..."
+
+        FIRED_GUIDS="[]"
+
+        for i in $(seq 0 $(( DUE_COUNT - 1 ))); do
+          ITEM="$(echo "${DUE_JSON}" | jq -c ".[$i]")"
+          GUID="$(echo "${ITEM}" | jq -r '.guid')"
+          MSG="$(echo "${ITEM}" | jq -r '.reminder_message')"
+          SESSION_URL="$(echo "${ITEM}" | jq -r '.agent_session_url')"
+
+          echo "Firing reminder ${GUID}: ${MSG}"
+
+          PROMPT="This is a scheduled reminder you set for yourself.
+
+        Reminder message: ${MSG}
+
+        Original session: ${SESSION_URL}"
+
+          PROMPT_B64="$(printf '%s' "${PROMPT}" | base64 | tr -d '\n')"
+
+          PAYLOAD="$(jq -n \
+            --arg prompt "${PROMPT}" \
+            --arg url "${SESSION_URL}" \
+            '{
+              "prompt": $prompt,
+              "is_continuation": true,
+              "session_url": $url
+            }')"
+
+          RESPONSE="$(curl -sf -X POST \
+            -H "Authorization: Bearer ${DEVIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "${PAYLOAD}" \
+            "https://api.devin.ai/v1/sessions" 2>&1 || echo "API_CALL_FAILED")"
+
+          if [ "${RESPONSE}" = "API_CALL_FAILED" ]; then
+            echo "::warning::Failed to fire reminder ${GUID}"
+          else
+            echo "Reminder ${GUID} fired successfully"
+            echo "Response: ${RESPONSE}"
+          fi
+
+          FIRED_GUIDS="$(echo "${FIRED_GUIDS}" | jq -c --arg g "${GUID}" '. + [$g]')"
+        done
+
+        echo "fired_guids=$(echo "${FIRED_GUIDS}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
+        echo "fired_count=${DUE_COUNT}" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Slack notification (cron)
+      if: steps.resolve.outputs.is_cron == 'true' && steps.list.outputs.due_count != '0' && inputs.slack-channel != ''
+      shell: bash
+      env:
+        DUE_JSON: ${{ steps.list.outputs.due_json }}
+        SLACK_TOKEN: ${{ inputs.slack-token }}
+        SLACK_CHANNEL: ${{ inputs.slack-channel }}
+      run: |
+        set -euo pipefail
+
+        DUE_COUNT="$(echo "${DUE_JSON}" | jq 'length')"
+
+        for i in $(seq 0 $(( DUE_COUNT - 1 ))); do
+          ITEM="$(echo "${DUE_JSON}" | jq -c ".[$i]")"
+          MSG="$(echo "${ITEM}" | jq -r '.reminder_message')"
+          SESSION_URL="$(echo "${ITEM}" | jq -r '.agent_session_url')"
+
+          PAYLOAD="$(jq -n \
+            --arg channel "${SLACK_CHANNEL}" \
+            --arg text "Reminder delivered: ${MSG}\nSession: ${SESSION_URL}" \
+            '{channel: $channel, unfurl_links: false, unfurl_media: false, text: $text}')"
+
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${SLACK_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "${PAYLOAD}" \
+            "https://slack.com/api/chat.postMessage" > /dev/null || echo "::warning::Failed to send Slack notification for reminder $i"
+        done
+
+    - name: Pop fired reminders (cron)
+      id: pop
+      if: steps.resolve.outputs.is_cron == 'true' && steps.list.outputs.due_count != '0'
+      shell: bash
+      env:
+        CURRENT_JSON: ${{ steps.list.outputs.reminders_json }}
+        DUE_JSON: ${{ steps.list.outputs.due_json }}
+      run: |
+        set -euo pipefail
+
+        DUE_GUIDS="$(echo "${DUE_JSON}" | jq -c '[.[].guid]')"
+        REMAINING="$(echo "${CURRENT_JSON}" | jq -c --argjson guids "${DUE_GUIDS}" '[.[] | select(.guid as $g | $guids | index($g) | not)]')"
+
+        mkdir -p /tmp/reminders-upload
+        echo "${REMAINING}" | jq . > /tmp/reminders-upload/reminders.json
+
+        echo "Remaining list:"
+        cat /tmp/reminders-upload/reminders.json
+
+        TOTAL="$(echo "${REMAINING}" | jq 'length')"
+        echo "remaining_count=${TOTAL}" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Upload reminders artifact (cron pop)
+      if: steps.resolve.outputs.is_cron == 'true' && steps.list.outputs.due_count != '0'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.resolve.outputs.artifact_name }}
+        path: /tmp/reminders-upload/reminders.json
+        retention-days: 4
+        overwrite: true
+
+    - name: Print cron result
+      if: steps.resolve.outputs.is_cron == 'true'
+      shell: bash
+      env:
+        DUE_COUNT: ${{ steps.list.outputs.due_count }}
+        REMAINING: ${{ steps.pop.outputs.remaining_count }}
+      run: |
+        if [ "${DUE_COUNT}" = "0" ]; then
+          echo "No reminders are currently due."
+        else
+          echo "Fired ${DUE_COUNT} reminder(s)."
+          echo "Remaining: ${REMAINING:-0}"
+        fi
