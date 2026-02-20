@@ -243,7 +243,7 @@ runs:
           channel: "${{ inputs.slack-channel }}"
           unfurl_links: false
           unfurl_media: false
-          text: "Reminder scheduled for ${{ steps.resolve.outputs.remind_at_display }}: ${{ steps.resolve.outputs.reminder_message }}\nSession: <${{ steps.resolve.outputs.agent_session_url }}|${{ steps.resolve.outputs.session_id_short }}>"
+          text: "Reminder scheduled for ${{ steps.resolve.outputs.remind_at_display }}: ${{ steps.resolve.outputs.reminder_message }}\nSession: <${{ steps.resolve.outputs.agent_session_url }}|${{ steps.resolve.outputs.session_id_short }}>${{ steps.resolve.outputs.human_user != '' && format('\nCC: {0}', steps.resolve.outputs.human_user) || '' }}"
 
     - name: Print put result
       if: steps.resolve.outputs.is_put == 'true'
@@ -287,8 +287,6 @@ runs:
 
         Original session: ${SESSION_URL}"
 
-          PROMPT_B64="$(printf '%s' "${PROMPT}" | base64 | tr -d '\n')"
-
           PAYLOAD="$(jq -n \
             --arg prompt "${PROMPT}" \
             --arg url "${SESSION_URL}" \
@@ -309,19 +307,20 @@ runs:
           else
             echo "Reminder ${GUID} fired successfully"
             echo "Response: ${RESPONSE}"
+            FIRED_GUIDS="$(echo "${FIRED_GUIDS}" | jq -c --arg g "${GUID}" '. + [$g]')"
           fi
-
-          FIRED_GUIDS="$(echo "${FIRED_GUIDS}" | jq -c --arg g "${GUID}" '. + [$g]')"
         done
 
         echo "fired_guids=$(echo "${FIRED_GUIDS}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
-        echo "fired_count=${DUE_COUNT}" | tee -a "$GITHUB_OUTPUT"
+        FIRED_COUNT="$(echo "${FIRED_GUIDS}" | jq 'length')"
+        echo "fired_count=${FIRED_COUNT}" | tee -a "$GITHUB_OUTPUT"
 
     - name: Slack notification (cron)
-      if: steps.resolve.outputs.is_cron == 'true' && steps.list.outputs.due_count != '0' && inputs.slack-channel != ''
+      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && inputs.slack-channel != ''
       shell: bash
       env:
         DUE_JSON: ${{ steps.list.outputs.due_json }}
+        FIRED_GUIDS: ${{ steps.cron.outputs.fired_guids }}
         SLACK_TOKEN: ${{ inputs.slack-token }}
         SLACK_CHANNEL: ${{ inputs.slack-channel }}
       run: |
@@ -331,33 +330,45 @@ runs:
 
         for i in $(seq 0 $(( DUE_COUNT - 1 ))); do
           ITEM="$(echo "${DUE_JSON}" | jq -c ".[$i]")"
+          GUID="$(echo "${ITEM}" | jq -r '.guid')"
+
+          IS_FIRED="$(echo "${FIRED_GUIDS}" | jq --arg g "${GUID}" 'index($g) != null')"
+          if [ "${IS_FIRED}" != "true" ]; then
+            continue
+          fi
+
           MSG="$(echo "${ITEM}" | jq -r '.reminder_message')"
           SESSION_URL="$(echo "${ITEM}" | jq -r '.agent_session_url')"
+          HUMAN="$(echo "${ITEM}" | jq -r '.human_user // empty')"
+
+          TEXT="Reminder delivered: ${MSG}\nSession: ${SESSION_URL}"
+          if [ -n "${HUMAN}" ]; then
+            TEXT="${TEXT}\nCC: ${HUMAN}"
+          fi
 
           PAYLOAD="$(jq -n \
             --arg channel "${SLACK_CHANNEL}" \
-            --arg text "Reminder delivered: ${MSG}\nSession: ${SESSION_URL}" \
+            --arg text "${TEXT}" \
             '{channel: $channel, unfurl_links: false, unfurl_media: false, text: $text}')"
 
           curl -sf -X POST \
             -H "Authorization: Bearer ${SLACK_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "${PAYLOAD}" \
-            "https://slack.com/api/chat.postMessage" > /dev/null || echo "::warning::Failed to send Slack notification for reminder $i"
+            "https://slack.com/api/chat.postMessage" > /dev/null || echo "::warning::Failed to send Slack notification for reminder ${GUID}"
         done
 
     - name: Pop fired reminders (cron)
       id: pop
-      if: steps.resolve.outputs.is_cron == 'true' && steps.list.outputs.due_count != '0'
+      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0'
       shell: bash
       env:
         CURRENT_JSON: ${{ steps.list.outputs.reminders_json }}
-        DUE_JSON: ${{ steps.list.outputs.due_json }}
+        FIRED_GUIDS: ${{ steps.cron.outputs.fired_guids }}
       run: |
         set -euo pipefail
 
-        DUE_GUIDS="$(echo "${DUE_JSON}" | jq -c '[.[].guid]')"
-        REMAINING="$(echo "${CURRENT_JSON}" | jq -c --argjson guids "${DUE_GUIDS}" '[.[] | select(.guid as $g | $guids | index($g) | not)]')"
+        REMAINING="$(echo "${CURRENT_JSON}" | jq -c --argjson guids "${FIRED_GUIDS}" '[.[] | select(.guid as $g | $guids | index($g) | not)]')"
 
         mkdir -p /tmp/reminders-upload
         echo "${REMAINING}" | jq . > /tmp/reminders-upload/reminders.json
@@ -369,7 +380,7 @@ runs:
         echo "remaining_count=${TOTAL}" | tee -a "$GITHUB_OUTPUT"
 
     - name: Upload reminders artifact (cron pop)
-      if: steps.resolve.outputs.is_cron == 'true' && steps.list.outputs.due_count != '0'
+      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0'
       uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.resolve.outputs.artifact_name }}
