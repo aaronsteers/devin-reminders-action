@@ -1,7 +1,5 @@
 name: Devin Reminders Action
-description: |
-  Schedule, list, and fire reminders for Devin.ai sessions.
-  Stores reminders as GitHub Actions artifacts and fires them via aaronsteers/devin-action.
+description: "Schedule, list, and fire reminders for Devin.ai sessions."
 branding:
   icon: bell
   color: purple
@@ -213,12 +211,16 @@ runs:
 
         test -n "${CURRENT_JSON}" || CURRENT_JSON="[]"
 
+        SESSION_ID="$(echo "${AGENT_SESSION_URL}" | sed -E 's#.*/sessions/([^/?]+).*#\1#')"
+        SESSION_ID_SHORT="${SESSION_ID:0:8}"
+
         NEW_ITEM="$(jq -n \
           --arg guid "${ITEM_GUID}" \
           --arg msg "${REMINDER_MESSAGE}" \
           --arg url "${AGENT_SESSION_URL}" \
           --arg remind "${REMIND_AT}" \
           --arg human "${HUMAN_USER}" \
+          --arg sid_short "${SESSION_ID_SHORT}" \
           --arg created "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
           '{
             guid: $guid,
@@ -226,7 +228,8 @@ runs:
             agent_session_url: $url,
             remind_at: $remind,
             created_at: $created,
-            human_user: (if $human == "" then null else $human end)
+            human_user: (if $human == "" then null else $human end),
+            session_id_short: $sid_short
           }')"
 
         UPDATED="$(echo "${CURRENT_JSON}" | jq -c --argjson item "${NEW_ITEM}" '. + [$item]')"
@@ -307,6 +310,11 @@ runs:
           GUID="$(echo "${ITEM}" | jq -r '.guid')"
           MSG="$(echo "${ITEM}" | jq -r '.reminder_message')"
           SESSION_URL="$(echo "${ITEM}" | jq -r '.agent_session_url')"
+          SID_SHORT="$(echo "${ITEM}" | jq -r '.session_id_short // empty')"
+          if [ -z "${SID_SHORT}" ]; then
+            SESSION_ID="$(echo "${SESSION_URL}" | sed -E 's#.*/sessions/([^/?]+).*#\1#')"
+            SID_SHORT="${SESSION_ID:0:8}"
+          fi
 
           echo "Firing reminder ${GUID}: ${MSG}"
 
@@ -369,16 +377,33 @@ runs:
           MSG="$(echo "${ITEM}" | jq -r '.reminder_message')"
           SESSION_URL="$(echo "${ITEM}" | jq -r '.agent_session_url')"
           HUMAN="$(echo "${ITEM}" | jq -r '.human_user // empty')"
+          SID_SHORT="$(echo "${ITEM}" | jq -r '.session_id_short // empty')"
+          if [ -z "${SID_SHORT}" ]; then
+            SESSION_ID="$(echo "${SESSION_URL}" | sed -E 's#.*/sessions/([^/?]+).*#\1#')"
+            SID_SHORT="${SESSION_ID:0:8}"
+          fi
 
-          TEXT="Reminder delivered: ${MSG}\nSession: ${SESSION_URL}"
+          CC_LINE=""
           if [ -n "${HUMAN}" ]; then
-            TEXT="${TEXT}\nCC: ${HUMAN}"
+            CC_LINE="\nCC: ${HUMAN}"
           fi
 
           PAYLOAD="$(jq -n \
             --arg channel "${SLACK_CHANNEL}" \
-            --arg text "${TEXT}" \
-            '{channel: $channel, unfurl_links: false, unfurl_media: false, text: $text}')"
+            --arg msg "${MSG}" \
+            --arg url "${SESSION_URL}" \
+            --arg sid "${SID_SHORT}" \
+            --arg cc "${CC_LINE}" \
+            '{
+              channel: $channel,
+              unfurl_links: false,
+              unfurl_media: false,
+              blocks: [
+                {type: "section", text: {type: "mrkdwn", text: ":bell: Devin reminder delivered:"}},
+                {type: "section", text: {type: "mrkdwn", text: ("> *" + $msg + "*")}},
+                {type: "context", elements: [{type: "mrkdwn", text: ("Sent by <http://Devin.ai|Devin.ai> (No-Reply) from session <" + $url + "|" + $sid + ">." + $cc)}]}
+              ]
+            }')"
 
           curl -sf -X POST \
             -H "Authorization: Bearer ${SLACK_TOKEN}" \
