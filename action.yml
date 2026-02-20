@@ -20,10 +20,11 @@ inputs:
   agent-session-url:
     description: "Devin session URL to ping when the reminder fires (required for 'put')."
     required: false
-  human-user:
+  slack-users-cc:
     description: >
-      Optional person identifier (email, GitHub handle, or Slack user ID)
-      to CC on Slack notifications.
+      Comma or newline-delimited list of Slack user tags to CC on notifications.
+      Example: '<@U12345>, <@U67890>' or '@alice, @bob'.
+      Only used when slack-channel is set.
     required: false
   devin-token:
     description: "Devin API Token (required for authentication when firing reminders)."
@@ -78,7 +79,7 @@ runs:
         INPUT_REMIND_AT: ${{ inputs.remind-at }}
         INPUT_REMINDER_MESSAGE: ${{ inputs.reminder-message }}
         INPUT_AGENT_SESSION_URL: ${{ inputs.agent-session-url }}
-        INPUT_HUMAN_USER: ${{ inputs.human-user }}
+        INPUT_SLACK_USERS_CC: ${{ inputs.slack-users-cc }}
         INPUT_TIMEZONE: ${{ inputs.reminder-timezone }}
       run: |
         set -euo pipefail
@@ -104,12 +105,8 @@ runs:
           echo "GHEOF"
         } >> "$GITHUB_OUTPUT"
 
-        echo "human_user: ${INPUT_HUMAN_USER}"
-        {
-          echo "human_user<<GHEOF"
-          echo "${INPUT_HUMAN_USER}"
-          echo "GHEOF"
-        } >> "$GITHUB_OUTPUT"
+        SLACK_USERS_CC="$(echo "${INPUT_SLACK_USERS_CC}" | tr '\n' ',' | sed 's/,\+/, /g; s/^[, ]\+//; s/[, ]\+$//')"
+        echo "slack_users_cc=${SLACK_USERS_CC}" | tee -a "$GITHUB_OUTPUT"
 
         if [ -n "${INPUT_AGENT_SESSION_URL}" ]; then
           SESSION_ID="$(echo "${INPUT_AGENT_SESSION_URL}" | sed -E 's#.*/sessions/([^/?]+).*#\1#')"
@@ -219,7 +216,7 @@ runs:
         REMINDER_MESSAGE: ${{ steps.resolve.outputs.reminder_message }}
         AGENT_SESSION_URL: ${{ steps.resolve.outputs.agent_session_url }}
         REMIND_AT: ${{ steps.resolve.outputs.remind_at }}
-        HUMAN_USER: ${{ steps.resolve.outputs.human_user }}
+        SLACK_USERS_CC: ${{ steps.resolve.outputs.slack_users_cc }}
       run: |
         set -euo pipefail
 
@@ -233,7 +230,7 @@ runs:
           --arg msg "${REMINDER_MESSAGE}" \
           --arg url "${AGENT_SESSION_URL}" \
           --arg remind "${REMIND_AT}" \
-          --arg human "${HUMAN_USER}" \
+          --arg cc "${SLACK_USERS_CC}" \
           --arg sid_short "${SESSION_ID_SHORT}" \
           --arg created "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
           '{
@@ -242,7 +239,7 @@ runs:
             agent_session_url: $url,
             remind_at: $remind,
             created_at: $created,
-            human_user: (if $human == "" then null else $human end),
+            slack_users_cc: (if $cc == "" then null else $cc end),
             session_id_short: $sid_short
           }')"
 
@@ -289,7 +286,7 @@ runs:
             - type: context
               elements:
                 - type: mrkdwn
-                  text: "Sent by <http://Devin.ai|Devin.ai> (No-Reply) from session <${{ steps.resolve.outputs.agent_session_url }}|${{ steps.resolve.outputs.session_id_short }}>.${{ steps.resolve.outputs.human_user != '' && format(' CC: {0}', steps.resolve.outputs.human_user) || '' }}"
+                  text: "Sent by <http://Devin.ai|Devin.ai> (No-Reply) from session <${{ steps.resolve.outputs.agent_session_url }}|${{ steps.resolve.outputs.session_id_short }}>.${{ steps.resolve.outputs.slack_users_cc != '' && format(' CC: {0}', steps.resolve.outputs.slack_users_cc) || '' }}"
 
     - name: Print put result
       if: steps.resolve.outputs.is_put == 'true'
@@ -392,7 +389,7 @@ runs:
 
           MSG="$(echo "${ITEM}" | jq -r '.reminder_message')"
           SESSION_URL="$(echo "${ITEM}" | jq -r '.agent_session_url')"
-          HUMAN="$(echo "${ITEM}" | jq -r '.human_user // empty')"
+          SLACK_CC="$(echo "${ITEM}" | jq -r '.slack_users_cc // empty')"
           SID_SHORT="$(echo "${ITEM}" | jq -r '.session_id_short // empty')"
           if [ -z "${SID_SHORT}" ]; then
             SESSION_ID="$(echo "${SESSION_URL}" | sed -E 's#.*/sessions/([^/?]+).*#\1#')"
@@ -400,8 +397,8 @@ runs:
           fi
 
           CC_LINE=""
-          if [ -n "${HUMAN}" ]; then
-            CC_LINE="\nCC: ${HUMAN}"
+          if [ -n "${SLACK_CC}" ]; then
+            CC_LINE="\nCC: ${SLACK_CC}"
           fi
 
           PAYLOAD="$(jq -n \

@@ -18,7 +18,7 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 | `remind-at` | ISO 8601 timestamp with timezone offset for when the reminder fires. Must be in the future and no more than 3 days ahead. Required for `put`. | No | |
 | `reminder-message` | Message to deliver when the reminder fires. Required for `put`. | No | |
 | `agent-session-url` | Devin session URL to ping when the reminder fires. Required for `put`. | No | |
-| `human-user` | Person identifier (email, GitHub handle, or Slack user ID) to CC on notifications. | No | |
+| `slack-users-cc` | Comma or newline-delimited list of Slack user tags to CC on notifications (e.g. `<@U12345>, <@U67890>`). | No | |
 | `devin-token`| Devin API token. | Yes | |
 | `slack-channel` | Slack channel name for notifications. Leave empty to skip Slack. | No | |
 | `slack-token` | Slack bot token. Only needed if `slack-channel` is set. | No | |
