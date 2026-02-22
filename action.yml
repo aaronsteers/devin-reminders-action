@@ -43,6 +43,13 @@ inputs:
       Defaults to UTC.
     required: false
     default: "UTC"
+  lock-mode:
+    description: >
+      Controls artifact-based locking to prevent race conditions.
+      'auto' locks on put and cron (default), 'none' disables locking,
+      'always' locks on all actions including list.
+    required: false
+    default: "auto"
 
 outputs:
   reminders-json:
@@ -164,6 +171,17 @@ runs:
         fi
 
         echo "Validation passed."
+
+    - name: Acquire artifact lock
+      id: lock-acquire
+      if: >
+        (inputs.lock-mode == 'always') ||
+        (inputs.lock-mode == 'auto' && steps.resolve.outputs.is_list != 'true')
+      uses: guibranco/github-artifact-lock-action@v3.0.14
+      with:
+        lock-name: devin-reminders-lock
+        retry-wait: "10"
+        retry-max: "30"
 
     - name: Download reminders artifact
       id: download
@@ -460,6 +478,14 @@ runs:
         path: /tmp/reminders-upload/reminders.json
         retention-days: 4
         overwrite: true
+
+    - name: Release artifact lock
+      if: >
+        always() &&
+        steps.lock-acquire.outcome == 'success'
+      uses: guibranco/github-artifact-lock-action/release-lock@v3.0.14
+      with:
+        lock-name: devin-reminders-lock
 
     - name: Print cron result
       if: steps.resolve.outputs.is_cron == 'true'
