@@ -204,7 +204,7 @@ runs:
           echo "GHEOF"
         } >> "$GITHUB_OUTPUT"
 
-        echo ":clipboard: **Reminders** at \`${NOW}\` — ${TOTAL} total, ${DUE_COUNT} due." >> "$GITHUB_STEP_SUMMARY"
+        echo ":clipboard: **Reminders** at \`${NOW}\` — ${TOTAL} total, ${DUE_COUNT} due." | tee -a "$GITHUB_STEP_SUMMARY"
 
     # --- PUT steps ---
 
@@ -294,8 +294,7 @@ runs:
       if: steps.resolve.outputs.is_put == 'true'
       shell: bash
       run: |
-        echo "Reminder added successfully. Total: ${{ steps.put-build.outputs.total_count }}"
-        echo ":pushpin: **Reminder scheduled** for \`${{ steps.resolve.outputs.remind_at_display }}\` — session [${{ steps.resolve.outputs.session_id_short }}](${{ steps.resolve.outputs.agent_session_url }}). Total: ${{ steps.put-build.outputs.total_count }}" >> "$GITHUB_STEP_SUMMARY"
+        echo ":pushpin: **Reminder scheduled** for \`${{ steps.resolve.outputs.remind_at_display }}\` — session [${{ steps.resolve.outputs.session_id_short }}](${{ steps.resolve.outputs.agent_session_url }}). Total: ${{ steps.put-build.outputs.total_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
 
     # --- CRON steps ---
 
@@ -467,7 +466,7 @@ runs:
       shell: bash
       run: |
         if [ "${{ steps.list.outputs.due_count }}" = "0" ]; then
-          echo ":bell: **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due 0." >> "$GITHUB_STEP_SUMMARY"
+          echo ":bell: **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due 0." | tee -a "$GITHUB_STEP_SUMMARY"
         else
-          echo ":bell: **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due ${{ steps.list.outputs.due_count }}, fired ${{ steps.cron.outputs.fired_count }}, popped ${{ steps.pop.outputs.popped_count }}, remaining ${{ steps.pop.outputs.remaining_count }}." >> "$GITHUB_STEP_SUMMARY"
+          echo ":bell: **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due ${{ steps.list.outputs.due_count }}, fired ${{ steps.cron.outputs.fired_count }}, popped ${{ steps.pop.outputs.popped_count }}, remaining ${{ steps.pop.outputs.remaining_count }}." | tee -a "$GITHUB_STEP_SUMMARY"
         fi
