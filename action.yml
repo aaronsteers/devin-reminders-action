@@ -180,6 +180,8 @@ runs:
       uses: guibranco/github-artifact-lock-action@v3.0.14
       with:
         lock-name: devin-reminders-lock
+        retry-wait: "10"
+        retry-max: "30"
 
     - name: Download reminders artifact
       id: download
