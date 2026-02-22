@@ -177,10 +177,10 @@ runs:
     - name: Read and filter reminders
       id: list
       shell: bash
-      env:
-        NOW: ${{ steps.resolve.outputs.now }}
       run: |
         set -euo pipefail
+
+        NOW="${{ steps.resolve.outputs.now }}"
 
         FILE="/tmp/reminders-artifact/reminders.json"
         echo "Current time: ${NOW}"
@@ -293,13 +293,13 @@ runs:
     - name: Print put result
       if: steps.resolve.outputs.is_put == 'true'
       shell: bash
-      env:
-        REMIND_AT: ${{ steps.resolve.outputs.remind_at }}
-        REMIND_AT_DISPLAY: ${{ steps.resolve.outputs.remind_at_display }}
-        TOTAL: ${{ steps.put-build.outputs.total_count }}
-        SESSION_URL: ${{ steps.resolve.outputs.agent_session_url }}
-        SESSION_ID_SHORT: ${{ steps.resolve.outputs.session_id_short }}
       run: |
+        REMIND_AT="${{ steps.resolve.outputs.remind_at }}"
+        REMIND_AT_DISPLAY="${{ steps.resolve.outputs.remind_at_display }}"
+        TOTAL="${{ steps.put-build.outputs.total_count }}"
+        SESSION_URL="${{ steps.resolve.outputs.agent_session_url }}"
+        SESSION_ID_SHORT="${{ steps.resolve.outputs.session_id_short }}"
+
         echo "Reminder added successfully."
         echo "  remind_at: ${REMIND_AT}"
         echo "  total reminders: ${TOTAL}"
@@ -474,14 +474,14 @@ runs:
     - name: Print cron result
       if: steps.resolve.outputs.is_cron == 'true'
       shell: bash
-      env:
-        NOW: ${{ steps.resolve.outputs.now }}
-        TOTAL_COUNT: ${{ steps.list.outputs.total_count }}
-        DUE_COUNT: ${{ steps.list.outputs.due_count }}
-        FIRED_COUNT: ${{ steps.cron.outputs.fired_count }}
-        POPPED_COUNT: ${{ steps.pop.outputs.popped_count }}
-        REMAINING_COUNT: ${{ steps.pop.outputs.remaining_count }}
       run: |
+        NOW="${{ steps.resolve.outputs.now }}"
+        TOTAL_COUNT="${{ steps.list.outputs.total_count }}"
+        DUE_COUNT="${{ steps.list.outputs.due_count }}"
+        FIRED_COUNT="${{ steps.cron.outputs.fired_count }}"
+        POPPED_COUNT="${{ steps.pop.outputs.popped_count }}"
+        REMAINING_COUNT="${{ steps.pop.outputs.remaining_count }}"
+
         ACTUAL_FIRED="${FIRED_COUNT:-0}"
         ACTUAL_POPPED="${POPPED_COUNT:-0}"
         ACTUAL_REMAINING="${REMAINING_COUNT:-${TOTAL_COUNT}}"
