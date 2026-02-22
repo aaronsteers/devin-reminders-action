@@ -183,14 +183,34 @@ runs:
         retry-wait: "10"
         retry-max: "30"
 
+    - name: Find latest artifact run
+      id: find-artifact
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        ARTIFACT_NAME="${{ steps.resolve.outputs.artifact_name }}"
+        REPO="${{ github.repository }}"
+        RESULT=$(curl -s -H "Authorization: Bearer ${GH_TOKEN}" \
+          "https://api.github.com/repos/${REPO}/actions/artifacts?name=${ARTIFACT_NAME}&per_page=1")
+        RUN_ID=$(echo "${RESULT}" | jq -r '.artifacts[0].workflow_run.id // empty')
+        if [ -n "${RUN_ID}" ]; then
+          echo "Found artifact in run ${RUN_ID}"
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+        else
+          echo "No existing artifact found"
+        fi
+
     - name: Download reminders artifact
       id: download
-      uses: dawidd6/action-download-artifact@v14
+      if: steps.find-artifact.outputs.run_id != ''
+      uses: actions/download-artifact@v4
       with:
         name: ${{ steps.resolve.outputs.artifact_name }}
-        search_artifacts: true
-        if_no_artifact_found: warn
         path: /tmp/reminders-artifact
+        github-token: ${{ github.token }}
+        run-id: ${{ steps.find-artifact.outputs.run_id }}
 
     - name: Read and filter reminders
       id: list

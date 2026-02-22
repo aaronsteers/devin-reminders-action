@@ -173,11 +173,11 @@ jobs:
 
 ## Storage Model
 
-Reminders are stored as a JSON array in a GitHub Actions artifact (`devin-reminders-list`). The artifact is persisted across workflow runs using `dawidd6/action-download-artifact@v14` with `search_artifacts: true`, and updated via `actions/upload-artifact@v4` with `overwrite: true`. Old artifacts expire via the 4-day retention policy.
+Reminders are stored as a JSON array in a GitHub Actions artifact (`devin-reminders-list`). The artifact is persisted across workflow runs using `actions/download-artifact@v4` with a `run-id` lookup via the GitHub API, and updated via `actions/upload-artifact@v4` with `overwrite: true`. Old artifacts expire via the 4-day retention policy.
 
 ## Dependencies
 
-- [`dawidd6/action-download-artifact@v14`](https://github.com/dawidd6/action-download-artifact) — cross-run artifact download
+- [`actions/download-artifact@v4`](https://github.com/actions/download-artifact) — cross-run artifact download
 - [`actions/upload-artifact@v4`](https://github.com/actions/upload-artifact) — artifact upload
 - [`slackapi/slack-github-action@v2`](https://github.com/slackapi/slack-github-action) — Slack notifications (optional)
 - [`guibranco/github-artifact-lock-action@v3.0.14`](https://github.com/guibranco/github-artifact-lock-action) — artifact-based mutex locking to prevent race conditions on concurrent `put`/`cron` runs
