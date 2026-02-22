@@ -43,6 +43,17 @@ inputs:
       Defaults to UTC.
     required: false
     default: "UTC"
+  mutex-mode:
+    description: >
+      Controls artifact mutex locking to prevent race conditions.
+      'auto' locks on put and cron (default), 'none' disables locking,
+      'always' locks on all actions including list.
+    required: false
+    default: "auto"
+  mutex-timeout:
+    description: "Maximum seconds to wait for mutex lock acquisition. Default: 600 (10 minutes)."
+    required: false
+    default: "600"
 
 outputs:
   reminders-json:
@@ -164,6 +175,71 @@ runs:
         fi
 
         echo "Validation passed."
+
+    - name: Acquire mutex lock
+      id: mutex-acquire
+      if: >
+        (inputs.mutex-mode == 'always') ||
+        (inputs.mutex-mode == 'auto' && steps.resolve.outputs.is_list != 'true')
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        LOCK_REPO: ${{ github.repository }}
+        LOCK_BRANCH: gh-devin-reminders-mutex
+        LOCK_TIMEOUT: ${{ inputs.mutex-timeout }}
+        LOCK_DIR: /tmp/mutex-lock
+        RUN_ID: ${{ github.run_id }}
+      run: |
+        set -euo pipefail
+
+        LOCK_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${LOCK_REPO}.git"
+        WAITED=0
+        INTERVAL=5
+
+        git init --bare "${LOCK_DIR}" 2>/dev/null
+        cd "${LOCK_DIR}"
+        git remote add origin "${LOCK_URL}" 2>/dev/null || true
+
+        while true; do
+          git fetch origin "${LOCK_BRANCH}" 2>/dev/null && {
+            LOCK_MSG="$(git log -1 --format='%s' FETCH_HEAD 2>/dev/null || echo '')"
+            LOCK_TS="$(echo "${LOCK_MSG}" | sed -n 's/.*ts=\([0-9]*\).*/\1/p')"
+            NOW_TS="$(date +%s)"
+            if [ -n "${LOCK_TS}" ] && [ $(( NOW_TS - LOCK_TS )) -gt ${LOCK_TIMEOUT} ]; then
+              echo "::warning::Stale lock detected (age=$(( NOW_TS - LOCK_TS ))s). Overriding."
+              git push origin --delete "${LOCK_BRANCH}" 2>/dev/null || true
+            else
+              if [ "${WAITED}" -ge "${LOCK_TIMEOUT}" ]; then
+                echo "::error::Failed to acquire mutex lock within ${LOCK_TIMEOUT}s"
+                exit 1
+              fi
+              echo "Lock held, waiting ${INTERVAL}s... (${WAITED}/${LOCK_TIMEOUT}s)"
+              sleep "${INTERVAL}"
+              WAITED=$(( WAITED + INTERVAL ))
+              continue
+            fi
+          }
+
+          LOCK_FILE="$(mktemp)"
+          echo "run=${RUN_ID} ts=$(date +%s)" > "${LOCK_FILE}"
+          BLOB="$(git hash-object -w "${LOCK_FILE}")"
+          TREE="$(printf '100644 blob %s\tlockfile\n' "${BLOB}" | git mktree)"
+          COMMIT="$(git commit-tree "${TREE}" -m "lock: run=${RUN_ID} ts=$(date +%s)")"
+
+          if git push origin "${COMMIT}:refs/heads/${LOCK_BRANCH}" 2>/dev/null; then
+            echo "mutex_acquired=true" >> "$GITHUB_OUTPUT"
+            echo "Lock acquired for run ${RUN_ID}"
+            break
+          fi
+
+          if [ "${WAITED}" -ge "${LOCK_TIMEOUT}" ]; then
+            echo "::error::Failed to acquire mutex lock within ${LOCK_TIMEOUT}s"
+            exit 1
+          fi
+          echo "Lock race lost, retrying in ${INTERVAL}s... (${WAITED}/${LOCK_TIMEOUT}s)"
+          sleep "${INTERVAL}"
+          WAITED=$(( WAITED + INTERVAL ))
+        done
 
     - name: Download reminders artifact
       id: download
@@ -289,6 +365,20 @@ runs:
               elements:
                 - type: mrkdwn
                   text: "Sent by <http://Devin.ai|Devin.ai> (No-Reply) from session <${{ steps.resolve.outputs.agent_session_url }}|${{ steps.resolve.outputs.session_id_short }}>.${{ steps.resolve.outputs.slack_users_cc != '' && format(' CC: {0}', steps.resolve.outputs.slack_users_cc) || '' }}"
+
+    - name: Release mutex lock (put)
+      if: steps.mutex-acquire.outputs.mutex_acquired == 'true' && steps.resolve.outputs.is_put == 'true' && always()
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        LOCK_REPO: ${{ github.repository }}
+        LOCK_BRANCH: gh-devin-reminders-mutex
+      run: |
+        set -euo pipefail
+        LOCK_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${LOCK_REPO}.git"
+        git ls-remote --heads "${LOCK_URL}" "${LOCK_BRANCH}" | grep -q . && \
+          git push "${LOCK_URL}" --delete "${LOCK_BRANCH}" 2>/dev/null && \
+          echo "Lock released" || echo "Lock already released"
 
     - name: Print put result
       if: steps.resolve.outputs.is_put == 'true'
@@ -460,6 +550,20 @@ runs:
         path: /tmp/reminders-upload/reminders.json
         retention-days: 4
         overwrite: true
+
+    - name: Release mutex lock (cron)
+      if: steps.mutex-acquire.outputs.mutex_acquired == 'true' && steps.resolve.outputs.is_cron == 'true' && always()
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        LOCK_REPO: ${{ github.repository }}
+        LOCK_BRANCH: gh-devin-reminders-mutex
+      run: |
+        set -euo pipefail
+        LOCK_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${LOCK_REPO}.git"
+        git ls-remote --heads "${LOCK_URL}" "${LOCK_BRANCH}" | grep -q . && \
+          git push "${LOCK_URL}" --delete "${LOCK_BRANCH}" 2>/dev/null && \
+          echo "Lock released" || echo "Lock already released"
 
     - name: Print cron result
       if: steps.resolve.outputs.is_cron == 'true'
