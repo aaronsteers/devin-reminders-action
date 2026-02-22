@@ -294,10 +294,7 @@ runs:
       if: steps.resolve.outputs.is_put == 'true'
       shell: bash
       run: |
-        echo "📌 **Reminder scheduled**" | tee -a "$GITHUB_STEP_SUMMARY"
-        echo "- time: \`${{ steps.resolve.outputs.remind_at_display }}\`" | tee -a "$GITHUB_STEP_SUMMARY"
-        echo "- session: [${{ steps.resolve.outputs.session_id_short }}](${{ steps.resolve.outputs.agent_session_url }})" | tee -a "$GITHUB_STEP_SUMMARY"
-        echo "- total: ${{ steps.put-build.outputs.total_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo -e "📌 **Reminder scheduled**\n- time: \`${{ steps.resolve.outputs.remind_at_display }}\`\n- session: [${{ steps.resolve.outputs.session_id_short }}](${{ steps.resolve.outputs.agent_session_url }})\n- total: ${{ steps.put-build.outputs.total_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
 
     # --- CRON steps ---
 
@@ -471,10 +468,5 @@ runs:
         if [ "${{ steps.list.outputs.due_count }}" = "0" ]; then
           echo "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due 0." | tee -a "$GITHUB_STEP_SUMMARY"
         else
-          echo "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\`" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "- total: ${{ steps.list.outputs.total_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "- due: ${{ steps.list.outputs.due_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "- fired: ${{ steps.cron.outputs.fired_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "- popped: ${{ steps.pop.outputs.popped_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "- remaining: ${{ steps.pop.outputs.remaining_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo -e "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\`\n- total: ${{ steps.list.outputs.total_count }}\n- due: ${{ steps.list.outputs.due_count }}\n- fired: ${{ steps.cron.outputs.fired_count }}\n- popped: ${{ steps.pop.outputs.popped_count }}\n- remaining: ${{ steps.pop.outputs.remaining_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
