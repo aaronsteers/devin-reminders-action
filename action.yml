@@ -294,9 +294,7 @@ runs:
       if: steps.resolve.outputs.is_put == 'true'
       shell: bash
       run: |
-        echo "Reminder added successfully."
-        echo "  remind_at: ${{ steps.resolve.outputs.remind_at }}"
-        echo "  total reminders: ${{ steps.put-build.outputs.total_count }}"
+        echo "Reminder added successfully. Total: ${{ steps.put-build.outputs.total_count }}"
         echo ":pushpin: **Reminder scheduled** for \`${{ steps.resolve.outputs.remind_at_display }}\` — session [${{ steps.resolve.outputs.session_id_short }}](${{ steps.resolve.outputs.agent_session_url }}). Total: ${{ steps.put-build.outputs.total_count }}" >> "$GITHUB_STEP_SUMMARY"
 
     # --- CRON steps ---
