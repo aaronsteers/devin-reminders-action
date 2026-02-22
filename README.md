@@ -69,45 +69,100 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 ### Full Workflow (Cron + Manual)
 
 ```yaml
-name: Devin Reminders
+name: Devin Reminders Workflow
+run-name: "Devin Reminders (${{ inputs.action || 'cron' }})"
 
 on:
   schedule:
     - cron: "*/30 * * * *"
+
   workflow_dispatch:
     inputs:
       action:
-        description: "Action: put, list, or cron"
+        description: "Action to perform: put, list, or cron"
         required: true
         type: choice
-        options: [put, list, cron]
+        options:
+          - cron
+          - list
+          - put
       reminder_message:
-        description: "Reminder message (required for put)"
+        description: "Reminder message to deliver (required for 'put')."
+        required: false
         type: string
       remind_at:
-        description: "ISO 8601 timestamp with offset (required for put)"
+        description: >
+          ISO 8601 timestamp with timezone offset for when the reminder fires
+          (required for 'put'). Must be in the future and no more than 3 days ahead.
+          Example: 2026-02-20T17:00:00-08:00
+        required: false
         type: string
       agent_session_url:
-        description: "Devin session URL (required for put)"
+        description: "Devin session URL to ping when the reminder is due (required for 'put')."
+        required: false
+        type: string
+      slack_users_cc:
+        description: >
+          Comma-delimited list of Slack user tags to CC on notifications.
+          Example: '<@U12345>, <@U67890>'
+        required: false
         type: string
 
-permissions:
-  actions: write
-
 jobs:
-  reminders:
+  list-reminders:
+    name: List Reminders
     runs-on: ubuntu-latest
+    if: ${{ inputs.action == 'list' }}
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - uses: aaronsteers/devin-reminders-action@v1
+      - name: Execute reminder action
+        uses: aaronsteers/devin-reminders-action@v0.4.0
         with:
-          action: ${{ github.event_name == 'schedule' && 'cron' || inputs.action }}
-          remind-at: ${{ inputs.remind_at }}
-          reminder-message: ${{ inputs.reminder_message }}
-          agent-session-url: ${{ inputs.agent_session_url }}
+          action: 'list'
+          reminder-timezone: America/Los_Angeles
+          devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+
+  create-new-reminder:
+    name: Create New Reminder
+    runs-on: ubuntu-latest
+    if: ${{ inputs.action == 'put' }}
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Execute reminder action
+        uses: aaronsteers/devin-reminders-action@v0.4.0
+        with:
+          action: 'put'
+          lock-mode: auto
+          reminder-timezone: America/Los_Angeles
           devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
           slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
           slack-channel: devin-reminders
+          remind-at: ${{ inputs.remind_at }}
+          reminder-message: ${{ inputs.reminder_message }}
+          agent-session-url: ${{ inputs.agent_session_url }}
+          slack-users-cc: ${{ inputs.slack_users_cc }}
+
+  process-reminders-due:
+    name: Process Reminders Due
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'schedule' || inputs.action == 'cron' }}
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Execute reminder action
+        uses: aaronsteers/devin-reminders-action@v0.4.0
+        with:
+          action: 'cron'
+          lock-mode: auto
           reminder-timezone: America/Los_Angeles
+          devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+          slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
+          slack-channel: devin-reminders
 ```
 
 ## How It Works
