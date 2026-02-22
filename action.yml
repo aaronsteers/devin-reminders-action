@@ -294,7 +294,10 @@ runs:
       if: steps.resolve.outputs.is_put == 'true'
       shell: bash
       run: |
-        echo "📌 **Reminder scheduled** for \`${{ steps.resolve.outputs.remind_at_display }}\` — session [${{ steps.resolve.outputs.session_id_short }}](${{ steps.resolve.outputs.agent_session_url }}). Total: ${{ steps.put-build.outputs.total_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "📌 **Reminder scheduled**" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "- time: \`${{ steps.resolve.outputs.remind_at_display }}\`" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "- session: [${{ steps.resolve.outputs.session_id_short }}](${{ steps.resolve.outputs.agent_session_url }})" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "- total: ${{ steps.put-build.outputs.total_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
 
     # --- CRON steps ---
 
