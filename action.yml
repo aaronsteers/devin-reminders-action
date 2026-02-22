@@ -466,13 +466,8 @@ runs:
       if: steps.resolve.outputs.is_cron == 'true'
       shell: bash
       run: |
-        FIRED="${{ steps.cron.outputs.fired_count }}"; FIRED="${FIRED:-0}"
-        POPPED="${{ steps.pop.outputs.popped_count }}"; POPPED="${POPPED:-0}"
-        REMAINING="${{ steps.pop.outputs.remaining_count }}"; REMAINING="${REMAINING:-${{ steps.list.outputs.total_count }}}"
         if [ "${{ steps.list.outputs.due_count }}" = "0" ]; then
-          echo "No reminders are currently due."
           echo ":bell: **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due 0." >> "$GITHUB_STEP_SUMMARY"
         else
-          echo "Processed ${{ steps.list.outputs.due_count }} due reminder(s); fired=${FIRED}; remaining=${REMAINING}"
-          echo ":bell: **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due ${{ steps.list.outputs.due_count }}, fired ${FIRED}, popped ${POPPED}, remaining ${REMAINING}." >> "$GITHUB_STEP_SUMMARY"
+          echo ":bell: **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due ${{ steps.list.outputs.due_count }}, fired ${{ steps.cron.outputs.fired_count }}, popped ${{ steps.pop.outputs.popped_count }}, remaining ${{ steps.pop.outputs.remaining_count }}." >> "$GITHUB_STEP_SUMMARY"
         fi
