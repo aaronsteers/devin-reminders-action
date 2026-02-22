@@ -173,6 +173,7 @@ runs:
         echo "Validation passed."
 
     - name: Acquire artifact lock
+      id: lock-acquire
       if: >
         (inputs.lock-mode == 'always') ||
         (inputs.lock-mode == 'auto' && steps.resolve.outputs.is_list != 'true')
@@ -479,8 +480,7 @@ runs:
     - name: Release artifact lock
       if: >
         always() &&
-        ((inputs.lock-mode == 'always') ||
-        (inputs.lock-mode == 'auto' && steps.resolve.outputs.is_list != 'true'))
+        steps.lock-acquire.outcome == 'success'
       uses: guibranco/github-artifact-lock-action/release-lock@v3.0.14
       with:
         lock-name: devin-reminders-lock
