@@ -43,17 +43,13 @@ inputs:
       Defaults to UTC.
     required: false
     default: "UTC"
-  mutex-mode:
+  lock-mode:
     description: >
-      Controls artifact mutex locking to prevent race conditions.
+      Controls artifact-based locking to prevent race conditions.
       'auto' locks on put and cron (default), 'none' disables locking,
       'always' locks on all actions including list.
     required: false
     default: "auto"
-  mutex-github-token:
-    description: "Optional GitHub token for mutex lock operations. Defaults to `github.token`. Needs `contents:write`."
-    required: false
-    default: ${{ github.token }}
 
 outputs:
   reminders-json:
@@ -176,15 +172,13 @@ runs:
 
         echo "Validation passed."
 
-    - name: Acquire mutex lock
+    - name: Acquire artifact lock
       if: >
-        (inputs.mutex-mode == 'always') ||
-        (inputs.mutex-mode == 'auto' && steps.resolve.outputs.is_list != 'true')
-      uses: ben-z/gh-action-mutex@v1.0.0-alpha.9
+        (inputs.lock-mode == 'always') ||
+        (inputs.lock-mode == 'auto' && steps.resolve.outputs.is_list != 'true')
+      uses: guibranco/github-artifact-lock-action@v3.0.14
       with:
-        repo-token: ${{ inputs.mutex-github-token }}
-        repository: ${{ github.repository }}
-        branch: gh-devin-reminders-mutex
+        lock-name: devin-reminders-lock
 
     - name: Download reminders artifact
       id: download
@@ -491,3 +485,12 @@ runs:
         else
           echo -e "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\`\n- total: ${{ steps.list.outputs.total_count }}\n- due: ${{ steps.list.outputs.due_count }}\n- fired: ${{ steps.cron.outputs.fired_count }}\n- popped: ${{ steps.pop.outputs.popped_count }}\n- remaining: ${{ steps.pop.outputs.remaining_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
+
+    - name: Release artifact lock
+      if: >
+        always() &&
+        ((inputs.lock-mode == 'always') ||
+        (inputs.lock-mode == 'auto' && steps.resolve.outputs.is_list != 'true'))
+      uses: guibranco/github-artifact-lock-action/release-lock@v3.0.14
+      with:
+        lock-name: devin-reminders-lock
