@@ -23,6 +23,7 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 | `slack-channel` | Slack channel name for notifications. Leave empty to skip Slack. | No | |
 | `slack-token` | Slack bot token. Only needed if `slack-channel` is set. | No | |
 | `reminder-timezone` | Timezone for displaying times in notifications. Accepts IANA names (e.g. `America/Los_Angeles`) or UTC offsets. Does not affect parsing of `remind-at`. | No | `UTC` |
+| `lock-mode` | Controls artifact-based locking to prevent race conditions. `auto` locks on `put` and `cron`, `none` disables locking, `always` locks on all actions including `list`. | No | `auto` |
 
 ## Outputs
 
@@ -118,6 +119,13 @@ jobs:
 ## Storage Model
 
 Reminders are stored as a JSON array in a GitHub Actions artifact (`devin-reminders-list`). The artifact is persisted across workflow runs using `dawidd6/action-download-artifact@v14` with `search_artifacts: true`, and updated via `actions/upload-artifact@v4` with `overwrite: true`. Old artifacts expire via the 4-day retention policy.
+
+## Dependencies
+
+- [`dawidd6/action-download-artifact@v14`](https://github.com/dawidd6/action-download-artifact) — cross-run artifact download
+- [`actions/upload-artifact@v4`](https://github.com/actions/upload-artifact) — artifact upload
+- [`slackapi/slack-github-action@v2`](https://github.com/slackapi/slack-github-action) — Slack notifications (optional)
+- [`guibranco/github-artifact-lock-action@v3.0.14`](https://github.com/guibranco/github-artifact-lock-action) — artifact-based mutex locking to prevent race conditions on concurrent `put`/`cron` runs. Requires `actions: write` permission.
 
 ## License
 
