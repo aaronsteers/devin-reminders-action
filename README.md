@@ -175,6 +175,8 @@ jobs:
 
 Reminders are stored as a JSON array in a GitHub Actions artifact (`devin-reminders-list`). The artifact is persisted across workflow runs using `actions/download-artifact@v4` with a `run-id` lookup via the GitHub API, and updated via `actions/upload-artifact@v4` with `overwrite: true`. Old artifacts expire via the 4-day retention policy.
 
+> **Important:** All reminder actions (`put`, `list`, `cron`) must be defined in a **single workflow file**. GitHub Actions only allows workflows to upload artifacts to their own workflow run, so splitting actions across multiple workflow files would prevent them from sharing the same artifact.
+
 ## Dependencies
 
 - [`actions/download-artifact@v4`](https://github.com/actions/download-artifact) — cross-run artifact download
