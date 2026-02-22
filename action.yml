@@ -179,7 +179,6 @@ runs:
       shell: bash
       env:
         NOW: ${{ steps.resolve.outputs.now }}
-        IS_LIST: ${{ steps.resolve.outputs.is_list }}
       run: |
         set -euo pipefail
 
@@ -205,9 +204,7 @@ runs:
           echo "GHEOF"
         } >> "$GITHUB_OUTPUT"
 
-        if [ "${IS_LIST}" = "true" ]; then
-          echo ":clipboard: **List** at \`${NOW}\` — ${TOTAL} total, ${DUE_COUNT} due." >> "$GITHUB_STEP_SUMMARY"
-        fi
+        echo ":clipboard: **Reminders** at \`${NOW}\` — ${TOTAL} total, ${DUE_COUNT} due." >> "$GITHUB_STEP_SUMMARY"
 
     # --- PUT steps ---
 
