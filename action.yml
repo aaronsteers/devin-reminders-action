@@ -177,10 +177,10 @@ runs:
     - name: Read and filter reminders
       id: list
       shell: bash
-      env:
-        NOW: ${{ steps.resolve.outputs.now }}
       run: |
         set -euo pipefail
+
+        NOW="${{ steps.resolve.outputs.now }}"
 
         FILE="/tmp/reminders-artifact/reminders.json"
         echo "Current time: ${NOW}"
@@ -203,6 +203,8 @@ runs:
           echo "${DUE}" | jq -r '.[].guid'
           echo "GHEOF"
         } >> "$GITHUB_OUTPUT"
+
+        echo "📋 **Reminders** at \`${NOW}\` — ${TOTAL} total, ${DUE_COUNT} due." | tee -a "$GITHUB_STEP_SUMMARY"
 
     # --- PUT steps ---
 
@@ -291,15 +293,8 @@ runs:
     - name: Print put result
       if: steps.resolve.outputs.is_put == 'true'
       shell: bash
-      env:
-        ITEM_GUID: ${{ steps.resolve.outputs.item_guid }}
-        REMIND_AT: ${{ steps.resolve.outputs.remind_at }}
-        TOTAL: ${{ steps.put-build.outputs.total_count }}
       run: |
-        echo "Reminder added successfully."
-        echo "  guid: ${ITEM_GUID}"
-        echo "  remind_at: ${REMIND_AT}"
-        echo "  total reminders: ${TOTAL}"
+        echo -e "📌 **Reminder scheduled**\n- time: \`${{ steps.resolve.outputs.remind_at_display }}\`\n- session: [${{ steps.resolve.outputs.session_id_short }}](${{ steps.resolve.outputs.agent_session_url }})\n- total: ${{ steps.put-build.outputs.total_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
 
     # --- CRON steps ---
 
@@ -469,13 +464,9 @@ runs:
     - name: Print cron result
       if: steps.resolve.outputs.is_cron == 'true'
       shell: bash
-      env:
-        DUE_COUNT: ${{ steps.list.outputs.due_count }}
-        REMAINING: ${{ steps.pop.outputs.remaining_count }}
       run: |
-        if [ "${DUE_COUNT}" = "0" ]; then
-          echo "No reminders are currently due."
+        if [ "${{ steps.list.outputs.due_count }}" = "0" ]; then
+          echo "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due 0." | tee -a "$GITHUB_STEP_SUMMARY"
         else
-          echo "Fired ${DUE_COUNT} reminder(s)."
-          echo "Remaining: ${REMAINING:-0}"
+          echo -e "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\`\n- total: ${{ steps.list.outputs.total_count }}\n- due: ${{ steps.list.outputs.due_count }}\n- fired: ${{ steps.cron.outputs.fired_count }}\n- popped: ${{ steps.pop.outputs.popped_count }}\n- remaining: ${{ steps.pop.outputs.remaining_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
