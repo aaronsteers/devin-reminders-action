@@ -50,8 +50,8 @@ inputs:
       'always' locks on all actions including list.
     required: false
     default: "auto"
-  mutex-repo-token:
-    description: "GitHub token for mutex lock operations. Defaults to github.token. Needs contents:write on the lock repo."
+  mutex-github-token:
+    description: "Optional GitHub token for mutex lock operations. Defaults to `github.token`. Needs `contents:write`."
     required: false
     default: ${{ github.token }}
 
@@ -182,7 +182,7 @@ runs:
         (inputs.mutex-mode == 'auto' && steps.resolve.outputs.is_list != 'true')
       uses: ben-z/gh-action-mutex@v1.0.0-alpha.9
       with:
-        repo-token: ${{ inputs.mutex-repo-token }}
+        repo-token: ${{ inputs.mutex-github-token }}
         repository: ${{ github.repository }}
         branch: gh-devin-reminders-mutex
 
