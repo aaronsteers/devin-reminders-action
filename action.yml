@@ -476,6 +476,15 @@ runs:
         retention-days: 4
         overwrite: true
 
+    - name: Release artifact lock
+      if: >
+        always() &&
+        ((inputs.lock-mode == 'always') ||
+        (inputs.lock-mode == 'auto' && steps.resolve.outputs.is_list != 'true'))
+      uses: guibranco/github-artifact-lock-action/release-lock@v3.0.14
+      with:
+        lock-name: devin-reminders-lock
+
     - name: Print cron result
       if: steps.resolve.outputs.is_cron == 'true'
       shell: bash
@@ -485,12 +494,3 @@ runs:
         else
           echo -e "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\`\n- total: ${{ steps.list.outputs.total_count }}\n- due: ${{ steps.list.outputs.due_count }}\n- fired: ${{ steps.cron.outputs.fired_count }}\n- popped: ${{ steps.pop.outputs.popped_count }}\n- remaining: ${{ steps.pop.outputs.remaining_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
-
-    - name: Release artifact lock
-      if: >
-        always() &&
-        ((inputs.lock-mode == 'always') ||
-        (inputs.lock-mode == 'auto' && steps.resolve.outputs.is_list != 'true'))
-      uses: guibranco/github-artifact-lock-action/release-lock@v3.0.14
-      with:
-        lock-name: devin-reminders-lock
