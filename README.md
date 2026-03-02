@@ -6,7 +6,7 @@ A reusable GitHub Action for scheduling, listing, cancelling, and firing reminde
 
 - Schedule reminders for existing Devin sessions (`put`)
 - List all pending reminders and filter due items (`list`)
-- Cancel pending reminders by GUID or session URL (`cancel`)
+- Cancel pending reminders by GUID (`cancel`)
 - Fire due reminders and clean up automatically (`cron`)
 - Optional Slack notifications (opt-in via `slack-channel` input)
 - Timezone-aware display for notification messages
@@ -18,14 +18,13 @@ A reusable GitHub Action for scheduling, listing, cancelling, and firing reminde
 | `action` | Action to perform: `put`, `list`, `cancel`, or `cron` | Yes | |
 | `remind-at` | ISO 8601 timestamp with timezone offset for when the reminder fires. Must be in the future and no more than 3 days ahead. Required for `put`. | No | |
 | `reminder-message` | Message to deliver when the reminder fires. Required for `put`. | No | |
-| `agent-session-url` | Devin session URL to ping when the reminder fires. Required for `put`. | No | |
+| `agent-session-url` | Devin session URL to ping when the reminder fires. Required for `put` and `cancel`. | No | |
 | `slack-users-cc` | Comma or newline-delimited list of Slack user tags to CC on notifications (e.g. `<@U12345>, <@U67890>`). | No | |
 | `devin-token`| Devin API token. | Yes | |
 | `slack-channel` | Slack channel name for notifications. Leave empty to skip Slack. | No | |
 | `slack-token` | Slack bot token. Only needed if `slack-channel` is set. | No | |
 | `reminder-timezone` | Timezone for displaying times in notifications. Accepts IANA names (e.g. `America/Los_Angeles`) or UTC offsets. Does not affect parsing of `remind-at`. | No | `UTC` |
-| `cancel-guids` | JSON array of reminder GUIDs to cancel (for `cancel`). Either `cancel-guids` or `cancel-session-url` (or both) must be provided. | No | |
-| `cancel-session-url` | Cancel all reminders matching this Devin session URL (for `cancel`). Either `cancel-guids` or `cancel-session-url` (or both) must be provided. | No | |
+| `cancel-guids` | JSON array of reminder GUIDs to cancel. Required for `cancel`. | No | |
 | `lock-mode` | Controls artifact-based locking to prevent race conditions. `auto` locks on `put`, `cancel`, and `cron`, `none` disables locking, `always` locks on all actions including `list`. | No | `auto` |
 
 ## Outputs
@@ -72,25 +71,14 @@ A reusable GitHub Action for scheduling, listing, cancelling, and firing reminde
 
 ### Cancel Reminders
 
-Cancel by specific GUIDs:
+Cancel by GUIDs for a session (requires `agent-session-url` + `cancel-guids`):
 
 ```yaml
 - uses: aaronsteers/devin-reminders-action@v1
   with:
     action: cancel
+    agent-session-url: "https://app.devin.ai/sessions/abc123"
     cancel-guids: '["abc-123", "def-456"]'
-    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
-    slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
-    slack-channel: devin-reminders
-```
-
-Cancel all reminders for a session:
-
-```yaml
-- uses: aaronsteers/devin-reminders-action@v1
-  with:
-    action: cancel
-    cancel-session-url: "https://app.devin.ai/sessions/abc123"
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
     slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
     slack-channel: devin-reminders
@@ -129,13 +117,17 @@ on:
         required: false
         type: string
       agent_session_url:
-        description: "Devin session URL to ping when the reminder is due (required for 'put')."
+        description: "Devin session URL (required for 'put' and 'cancel')."
         required: false
         type: string
       slack_users_cc:
         description: >
           Comma-delimited list of Slack user tags to CC on notifications.
           Example: '<@U12345>, <@U67890>'
+        required: false
+        type: string
+      cancel_guids:
+        description: "JSON array of reminder GUIDs to cancel (required for 'cancel')."
         required: false
         type: string
 
@@ -177,6 +169,26 @@ jobs:
           agent-session-url: ${{ inputs.agent_session_url }}
           slack-users-cc: ${{ inputs.slack_users_cc }}
 
+  cancel-reminders:
+    name: Cancel Reminders
+    runs-on: ubuntu-latest
+    if: ${{ inputs.action == 'cancel' }}
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Execute reminder action
+        uses: aaronsteers/devin-reminders-action@v0.4.0
+        with:
+          action: 'cancel'
+          lock-mode: auto
+          reminder-timezone: America/Los_Angeles
+          devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+          slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
+          slack-channel: devin-reminders
+          agent-session-url: ${{ inputs.agent_session_url }}
+          cancel-guids: ${{ inputs.cancel_guids }}
+
   process-reminders-due:
     name: Process Reminders Due
     runs-on: ubuntu-latest
@@ -200,7 +212,7 @@ jobs:
 
 1. **`put`** schedules a reminder by appending it to a JSON artifact
 2. **`list`** reads the artifact, filters due reminders, and outputs counts and JSON
-3. **`cancel`** removes reminders matching the given GUIDs and/or session URL from the artifact
+3. **`cancel`** removes reminders matching the given GUIDs for the given session URL from the artifact
 4. **`cron`** reads the artifact, fires each due reminder via the Devin API, pops successful ones, and uploads the updated artifact
 
 ## Storage Model
