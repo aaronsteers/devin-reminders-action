@@ -1,11 +1,12 @@
 # Devin Reminders Action
 
-A reusable GitHub Action for scheduling, listing, and firing reminders for [Devin.ai](https://devin.ai) sessions. Uses GitHub Actions artifacts for storage and the Devin API to deliver reminders.
+A reusable GitHub Action for scheduling, listing, cancelling, and firing reminders for [Devin.ai](https://devin.ai) sessions. Uses GitHub Actions artifacts for storage and the Devin API to deliver reminders.
 
 ## Features
 
 - Schedule reminders for existing Devin sessions (`put`)
 - List all pending reminders and filter due items (`list`)
+- Cancel pending reminders by GUID or session URL (`cancel`)
 - Fire due reminders and clean up automatically (`cron`)
 - Optional Slack notifications (opt-in via `slack-channel` input)
 - Timezone-aware display for notification messages
@@ -14,7 +15,7 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 
 | Name | Description | Required | Default |
 |------|-------------|----------|---------|
-| `action` | Action to perform: `put`, `list`, or `cron` | Yes | |
+| `action` | Action to perform: `put`, `list`, `cancel`, or `cron` | Yes | |
 | `remind-at` | ISO 8601 timestamp with timezone offset for when the reminder fires. Must be in the future and no more than 3 days ahead. Required for `put`. | No | |
 | `reminder-message` | Message to deliver when the reminder fires. Required for `put`. | No | |
 | `agent-session-url` | Devin session URL to ping when the reminder fires. Required for `put`. | No | |
@@ -23,7 +24,9 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 | `slack-channel` | Slack channel name for notifications. Leave empty to skip Slack. | No | |
 | `slack-token` | Slack bot token. Only needed if `slack-channel` is set. | No | |
 | `reminder-timezone` | Timezone for displaying times in notifications. Accepts IANA names (e.g. `America/Los_Angeles`) or UTC offsets. Does not affect parsing of `remind-at`. | No | `UTC` |
-| `lock-mode` | Controls artifact-based locking to prevent race conditions. `auto` locks on `put` and `cron`, `none` disables locking, `always` locks on all actions including `list`. | No | `auto` |
+| `cancel-guids` | JSON array of reminder GUIDs to cancel (for `cancel`). Either `cancel-guids` or `cancel-session-url` (or both) must be provided. | No | |
+| `cancel-session-url` | Cancel all reminders matching this Devin session URL (for `cancel`). Either `cancel-guids` or `cancel-session-url` (or both) must be provided. | No | |
+| `lock-mode` | Controls artifact-based locking to prevent race conditions. `auto` locks on `put`, `cancel`, and `cron`, `none` disables locking, `always` locks on all actions including `list`. | No | `auto` |
 
 ## Outputs
 
@@ -36,6 +39,7 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
 | `total-count` | Total number of reminders in the list |
 | `item-guid` | GUID of the newly added reminder (only for `put`) |
 | `popped-count` | Number of reminders removed after cron firing |
+| `cancelled-count` | Number of reminders cancelled (only for `cancel`) |
 
 ## Usage
 
@@ -64,6 +68,32 @@ A reusable GitHub Action for scheduling, listing, and firing reminders for [Devi
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
 
 - run: echo "Due: ${{ steps.reminders.outputs.due-count }} / Total: ${{ steps.reminders.outputs.total-count }}"
+```
+
+### Cancel Reminders
+
+Cancel by specific GUIDs:
+
+```yaml
+- uses: aaronsteers/devin-reminders-action@v1
+  with:
+    action: cancel
+    cancel-guids: '["abc-123", "def-456"]'
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
+    slack-channel: devin-reminders
+```
+
+Cancel all reminders for a session:
+
+```yaml
+- uses: aaronsteers/devin-reminders-action@v1
+  with:
+    action: cancel
+    cancel-session-url: "https://app.devin.ai/sessions/abc123"
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
+    slack-channel: devin-reminders
 ```
 
 ### Full Workflow (Cron + Manual)
@@ -169,13 +199,14 @@ jobs:
 
 1. **`put`** schedules a reminder by appending it to a JSON artifact
 2. **`list`** reads the artifact, filters due reminders, and outputs counts and JSON
-3. **`cron`** reads the artifact, fires each due reminder via the Devin API, pops successful ones, and uploads the updated artifact
+3. **`cancel`** removes reminders matching the given GUIDs and/or session URL from the artifact
+4. **`cron`** reads the artifact, fires each due reminder via the Devin API, pops successful ones, and uploads the updated artifact
 
 ## Storage Model
 
 Reminders are stored as a JSON array in a GitHub Actions artifact (`devin-reminders-list`). The artifact is persisted across workflow runs using `actions/download-artifact@v4` with a `run-id` lookup via the GitHub API, and updated via `actions/upload-artifact@v4` with `overwrite: true`. Old artifacts expire via the 4-day retention policy.
 
-> **Important:** All reminder actions (`put`, `list`, `cron`) must be defined in a **single workflow file**. GitHub Actions only allows workflows to upload artifacts to their own workflow run, so splitting actions across multiple workflow files would prevent them from sharing the same artifact.
+> **Important:** All reminder actions (`put`, `list`, `cancel`, `cron`) must be defined in a **single workflow file**. GitHub Actions only allows workflows to upload artifacts to their own workflow run, so splitting actions across multiple workflow files would prevent them from sharing the same artifact.
 
 ## Dependencies
 
