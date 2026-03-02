@@ -109,13 +109,14 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "Action to perform: put, list, or cron"
+        description: "Action to perform: put, list, cancel, or cron"
         required: true
         type: choice
         options:
           - cron
           - list
           - put
+          - cancel
       reminder_message:
         description: "Reminder message to deliver (required for 'put')."
         required: false

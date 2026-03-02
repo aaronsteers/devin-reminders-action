@@ -204,7 +204,7 @@ runs:
         fi
 
         if [ -n "${CANCEL_GUIDS}" ]; then
-          echo "${CANCEL_GUIDS}" | jq empty 2>/dev/null || { echo "::error::cancel-guids must be a valid JSON array"; exit 1; }
+          echo "${CANCEL_GUIDS}" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1 || { echo "::error::cancel-guids must be a JSON array of strings"; exit 1; }
         fi
 
         echo "Validation passed."
