@@ -1,12 +1,12 @@
 name: Devin Reminders Action
-description: "Schedule, list, and fire reminders for Devin.ai sessions."
+description: "Schedule, list, cancel, and fire reminders for Devin.ai sessions."
 branding:
   icon: bell
   color: purple
 
 inputs:
   action:
-    description: "Action to perform: put, list, or cron"
+    description: "Action to perform: put, list, cancel, or cron"
     required: true
   remind-at:
     description: >
@@ -18,7 +18,7 @@ inputs:
     description: "Reminder message to deliver (required for 'put')."
     required: false
   agent-session-url:
-    description: "Devin session URL to ping when the reminder fires (required for 'put')."
+    description: "Devin session URL to ping when the reminder fires (required for 'put' and 'cancel')."
     required: false
   slack-users-cc:
     description: >
@@ -43,10 +43,15 @@ inputs:
       Defaults to UTC.
     required: false
     default: "UTC"
+  cancel-guids:
+    description: >
+      JSON array of reminder GUIDs to cancel (required for 'cancel' action).
+      Example: '["abc-123", "def-456"]'
+    required: false
   lock-mode:
     description: >
       Controls artifact-based locking to prevent race conditions.
-      'auto' locks on put and cron (default), 'none' disables locking,
+      'auto' locks on put, cancel, and cron (default), 'none' disables locking,
       'always' locks on all actions including list.
     required: false
     default: "auto"
@@ -73,6 +78,9 @@ outputs:
   popped-count:
     description: "Number of reminders removed after cron firing"
     value: ${{ steps.pop.outputs.popped_count }}
+  cancelled-count:
+    description: "Number of reminders cancelled (only set for cancel action)"
+    value: ${{ steps.cancel-build.outputs.cancelled_count }}
 
 runs:
   using: "composite"
@@ -95,6 +103,7 @@ runs:
         echo "is_put=$( [ "${INPUT_ACTION}" = "put" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
         echo "is_list=$( [ "${INPUT_ACTION}" = "list" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
         echo "is_cron=$( [ "${INPUT_ACTION}" = "cron" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
+        echo "is_cancel=$( [ "${INPUT_ACTION}" = "cancel" ] && echo true || echo false )" | tee -a "$GITHUB_OUTPUT"
 
         echo "artifact_name=devin-reminders-list" | tee -a "$GITHUB_OUTPUT"
 
@@ -169,6 +178,24 @@ runs:
           echo "::error::remind-at must be no more than 3 days in the future"
           exit 1
         fi
+
+        echo "Validation passed."
+
+    - name: Validate cancel inputs
+      if: steps.resolve.outputs.is_cancel == 'true'
+      shell: bash
+      env:
+        CANCEL_GUIDS: ${{ inputs.cancel-guids }}
+        SESSION_URL: ${{ steps.resolve.outputs.agent_session_url }}
+      run: |
+        set -euo pipefail
+
+        echo "Validating cancel inputs..."
+
+        test -n "${SESSION_URL}" || { echo "::error::agent-session-url is required for cancel"; exit 1; }
+        test -n "${CANCEL_GUIDS}" || { echo "::error::cancel-guids is required for cancel"; exit 1; }
+
+        echo "${CANCEL_GUIDS}" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1 || { echo "::error::cancel-guids must be a JSON array of strings"; exit 1; }
 
         echo "Validation passed."
 
@@ -331,6 +358,75 @@ runs:
       shell: bash
       run: |
         echo -e "📌 **Reminder scheduled**\n- time: \`${{ steps.resolve.outputs.remind_at_display }}\`\n- session: [${{ steps.resolve.outputs.session_id_short }}](${{ steps.resolve.outputs.agent_session_url }})\n- total: ${{ steps.put-build.outputs.total_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    # --- CANCEL steps ---
+
+    - name: Build updated reminders list (cancel)
+      id: cancel-build
+      if: steps.resolve.outputs.is_cancel == 'true'
+      shell: bash
+      env:
+        CURRENT_JSON: ${{ steps.list.outputs.reminders_json }}
+        CANCEL_GUIDS: ${{ inputs.cancel-guids }}
+        SESSION_URL: ${{ steps.resolve.outputs.agent_session_url }}
+      run: |
+        set -euo pipefail
+
+        test -n "${CURRENT_JSON}" || CURRENT_JSON="[]"
+
+        BEFORE_COUNT="$(echo "${CURRENT_JSON}" | jq 'length')"
+
+        REMAINING="${CURRENT_JSON}"
+
+        REMAINING="$(echo "${REMAINING}" | jq -c --arg url "${SESSION_URL}" --argjson guids "${CANCEL_GUIDS}" '[.[] | select(.agent_session_url != $url or (.guid as $g | $guids | index($g) | not))]')"
+
+        AFTER_COUNT="$(echo "${REMAINING}" | jq 'length')"
+        CANCELLED_COUNT=$(( BEFORE_COUNT - AFTER_COUNT ))
+
+        mkdir -p /tmp/reminders-upload
+        echo "${REMAINING}" | jq . > /tmp/reminders-upload/reminders.json
+
+        echo "Cancelled ${CANCELLED_COUNT} reminder(s). Remaining:"
+        cat /tmp/reminders-upload/reminders.json
+
+        echo "cancelled_count=${CANCELLED_COUNT}" | tee -a "$GITHUB_OUTPUT"
+        echo "remaining_count=${AFTER_COUNT}" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Upload reminders artifact (cancel)
+      if: steps.resolve.outputs.is_cancel == 'true' && steps.cancel-build.outputs.cancelled_count != '0'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.resolve.outputs.artifact_name }}
+        path: /tmp/reminders-upload/reminders.json
+        retention-days: 4
+        overwrite: true
+
+    - name: Slack notification (cancel)
+      if: steps.resolve.outputs.is_cancel == 'true' && steps.cancel-build.outputs.cancelled_count != '0' && inputs.slack-channel != ''
+      uses: slackapi/slack-github-action@v2
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack-token }}
+        errors: true
+        payload: |
+          channel: "${{ inputs.slack-channel }}"
+          unfurl_links: false
+          unfurl_media: false
+          blocks:
+            - type: section
+              text:
+                type: mrkdwn
+                text: ":no_bell: ${{ steps.cancel-build.outputs.cancelled_count }} Devin reminder(s) cancelled."
+            - type: context
+              elements:
+                - type: mrkdwn
+                  text: "${{ steps.cancel-build.outputs.remaining_count }} reminder(s) remaining."
+
+    - name: Print cancel result
+      if: steps.resolve.outputs.is_cancel == 'true'
+      shell: bash
+      run: |
+        echo -e "\U0001F515 **Reminders cancelled**\n- cancelled: ${{ steps.cancel-build.outputs.cancelled_count }}\n- remaining: ${{ steps.cancel-build.outputs.remaining_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
 
     # --- CRON steps ---
 
