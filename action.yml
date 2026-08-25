@@ -226,7 +226,7 @@ runs:
 
         for artifact_id in ${EXPIRED_IDS}; do
           echo "Deleting expired lock artifact ${artifact_id}"
-          curl -s -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" \
+          curl -fsS -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" \
             "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${artifact_id}" \
             || echo "::warning::Could not delete expired lock artifact ${artifact_id}"
         done
