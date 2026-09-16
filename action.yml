@@ -60,6 +60,12 @@ inputs:
       'always' locks on all actions including list.
     required: false
     default: "auto"
+  undeliverable-cc:
+    description: >
+      Slack user or group tags to CC when a reminder is dropped because its
+      session is unreachable (HTTP 403/404/410). Example: '<!subteam^S12345>'.
+      Only used when slack-channel is set.
+    required: false
 
 outputs:
   reminders-json:
@@ -86,6 +92,9 @@ outputs:
   failed-count:
     description: "Number of reminders that failed to fire (only set for cron action)"
     value: ${{ steps.cron.outputs.failed_count }}
+  undeliverable-count:
+    description: "Number of reminders dropped because the target session was unreachable (only set for cron action)"
+    value: ${{ steps.cron.outputs.undeliverable_count }}
   cancelled-count:
     description: "Number of reminders cancelled (only set for cancel action)"
     value: ${{ steps.cancel-build.outputs.cancelled_count }}
@@ -454,6 +463,7 @@ runs:
 
         FIRED_GUIDS="[]"
         FAILED_GUIDS="[]"
+        UNDELIVERABLE="[]"
 
         for i in $(seq 0 $(( DUE_COUNT - 1 ))); do
           ITEM="$(echo "${DUE_JSON}" | jq -c ".[$i]")"
@@ -501,6 +511,9 @@ runs:
 
           if [[ "${HTTP_STATUS}" -ge 200 && "${HTTP_STATUS}" -lt 300 ]]; then
             RESPONSE="OK"
+          elif [[ "${HTTP_STATUS}" == "403" || "${HTTP_STATUS}" == "404" || "${HTTP_STATUS}" == "410" ]]; then
+            echo "::warning::Session ${SESSION_ID} unreachable (HTTP ${HTTP_STATUS}); dropping reminder ${GUID}: ${RESPONSE_BODY}"
+            RESPONSE="SESSION_UNREACHABLE"
           else
             echo "::warning::Message endpoint returned HTTP ${HTTP_STATUS} for session ${SESSION_ID}: ${RESPONSE_BODY}"
             RESPONSE="API_CALL_FAILED"
@@ -509,6 +522,8 @@ runs:
           if [ "${RESPONSE}" = "API_CALL_FAILED" ]; then
             echo "::error::Failed to fire reminder ${GUID}"
             FAILED_GUIDS="$(echo "${FAILED_GUIDS}" | jq -c --arg g "${GUID}" '. + [$g]')"
+          elif [ "${RESPONSE}" = "SESSION_UNREACHABLE" ]; then
+            UNDELIVERABLE="$(echo "${UNDELIVERABLE}" | jq -c --arg g "${GUID}" --arg s "${HTTP_STATUS}" '. + [{guid: $g, http_status: $s}]')"
           else
             echo "Reminder ${GUID} fired successfully"
             echo "Response: ${RESPONSE}"
@@ -524,12 +539,24 @@ runs:
         FAILED_COUNT="$(echo "${FAILED_GUIDS}" | jq 'length')"
         echo "failed_count=${FAILED_COUNT}" | tee -a "$GITHUB_OUTPUT"
 
+        echo "undeliverable_json=$(echo "${UNDELIVERABLE}" | jq -c .)" | tee -a "$GITHUB_OUTPUT"
+        UNDELIVERABLE_GUIDS="$(echo "${UNDELIVERABLE}" | jq -c '[.[].guid]')"
+        echo "undeliverable_guids=${UNDELIVERABLE_GUIDS}" | tee -a "$GITHUB_OUTPUT"
+        UNDELIVERABLE_COUNT="$(echo "${UNDELIVERABLE}" | jq 'length')"
+        echo "undeliverable_count=${UNDELIVERABLE_COUNT}" | tee -a "$GITHUB_OUTPUT"
+
+        POP_GUIDS="$(jq -cn --argjson a "${FIRED_GUIDS}" --argjson b "${UNDELIVERABLE_GUIDS}" '$a + $b')"
+        echo "pop_guids=${POP_GUIDS}" | tee -a "$GITHUB_OUTPUT"
+        echo "pop_count=$(echo "${POP_GUIDS}" | jq 'length')" | tee -a "$GITHUB_OUTPUT"
+
     - name: Slack notification (cron)
-      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && steps.cron.outputs.fired_count != '' && inputs.slack-channel != ''
+      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.pop_count != '0' && steps.cron.outputs.pop_count != '' && inputs.slack-channel != ''
       shell: bash
       env:
         DUE_JSON: ${{ steps.list.outputs.due_json }}
         FIRED_GUIDS: ${{ steps.cron.outputs.fired_guids }}
+        UNDELIVERABLE_JSON: ${{ steps.cron.outputs.undeliverable_json }}
+        UNDELIVERABLE_CC: ${{ inputs.undeliverable-cc }}
         SLACK_TOKEN: ${{ inputs.slack-token }}
         SLACK_CHANNEL: ${{ inputs.slack-channel }}
       run: |
@@ -542,7 +569,8 @@ runs:
           GUID="$(echo "${ITEM}" | jq -r '.guid')"
 
           IS_FIRED="$(echo "${FIRED_GUIDS}" | jq --arg g "${GUID}" 'index($g) != null')"
-          if [ "${IS_FIRED}" != "true" ]; then
+          UNDELIVERABLE_STATUS="$(echo "${UNDELIVERABLE_JSON}" | jq -r --arg g "${GUID}" '.[] | select(.guid == $g) | .http_status')"
+          if [ "${IS_FIRED}" != "true" ] && [ -z "${UNDELIVERABLE_STATUS}" ]; then
             continue
           fi
 
@@ -555,6 +583,17 @@ runs:
             SID_SHORT="${SESSION_ID:0:8}"
           fi
 
+          if [ -n "${UNDELIVERABLE_STATUS}" ]; then
+            HEADLINE=":warning: Devin reminder dropped — session unreachable (HTTP ${UNDELIVERABLE_STATUS}):"
+            FOOTER="Target session <${SESSION_URL}|${SID_SHORT}> is archived, deleted, or no longer accessible. The reminder was removed and will not retry."
+            if [ -n "${UNDELIVERABLE_CC}" ]; then
+              SLACK_CC="${SLACK_CC:+${SLACK_CC}, }${UNDELIVERABLE_CC}"
+            fi
+          else
+            HEADLINE=":bell: Devin reminder delivered:"
+            FOOTER="Sent by <http://Devin.ai|Devin.ai> (No-Reply) from session <${SESSION_URL}|${SID_SHORT}>."
+          fi
+
           CC_LINE=""
           if [ -n "${SLACK_CC}" ]; then
             CC_LINE="\nCC: ${SLACK_CC}"
@@ -562,18 +601,18 @@ runs:
 
           PAYLOAD="$(jq -n \
             --arg channel "${SLACK_CHANNEL}" \
+            --arg headline "${HEADLINE}" \
             --arg msg "${MSG}" \
-            --arg url "${SESSION_URL}" \
-            --arg sid "${SID_SHORT}" \
+            --arg footer "${FOOTER}" \
             --arg cc "${CC_LINE}" \
             '{
               channel: $channel,
               unfurl_links: false,
               unfurl_media: false,
               blocks: [
-                {type: "section", text: {type: "mrkdwn", text: ":bell: Devin reminder delivered:"}},
+                {type: "section", text: {type: "mrkdwn", text: $headline}},
                 {type: "section", text: {type: "mrkdwn", text: ("> *" + $msg + "*")}},
-                {type: "context", elements: [{type: "mrkdwn", text: ("Sent by <http://Devin.ai|Devin.ai> (No-Reply) from session <" + $url + "|" + $sid + ">." + $cc)}]}
+                {type: "context", elements: [{type: "mrkdwn", text: ($footer + $cc)}]}
               ]
             }')"
 
@@ -584,17 +623,17 @@ runs:
             "https://slack.com/api/chat.postMessage" > /dev/null || echo "::warning::Failed to send Slack notification for reminder ${GUID}"
         done
 
-    - name: Pop fired reminders (cron)
+    - name: Pop fired and undeliverable reminders (cron)
       id: pop
-      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && steps.cron.outputs.fired_count != ''
+      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.pop_count != '0' && steps.cron.outputs.pop_count != ''
       shell: bash
       env:
         CURRENT_JSON: ${{ steps.list.outputs.reminders_json }}
-        FIRED_GUIDS: ${{ steps.cron.outputs.fired_guids }}
+        POP_GUIDS: ${{ steps.cron.outputs.pop_guids }}
       run: |
         set -euo pipefail
 
-        REMAINING="$(echo "${CURRENT_JSON}" | jq -c --argjson guids "${FIRED_GUIDS}" '[.[] | select(.guid as $g | $guids | index($g) | not)]')"
+        REMAINING="$(echo "${CURRENT_JSON}" | jq -c --argjson guids "${POP_GUIDS}" '[.[] | select(.guid as $g | $guids | index($g) | not)]')"
 
         mkdir -p /tmp/reminders-upload
         echo "${REMAINING}" | jq . > /tmp/reminders-upload/reminders.json
@@ -603,12 +642,12 @@ runs:
         cat /tmp/reminders-upload/reminders.json
 
         REMAINING_COUNT="$(echo "${REMAINING}" | jq 'length')"
-        POPPED_COUNT="$(echo "${FIRED_GUIDS}" | jq 'length')"
+        POPPED_COUNT="$(echo "${POP_GUIDS}" | jq 'length')"
         echo "remaining_count=${REMAINING_COUNT}" | tee -a "$GITHUB_OUTPUT"
         echo "popped_count=${POPPED_COUNT}" | tee -a "$GITHUB_OUTPUT"
 
     - name: Upload reminders artifact (cron pop)
-      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.fired_count != '0' && steps.cron.outputs.fired_count != ''
+      if: steps.resolve.outputs.is_cron == 'true' && steps.cron.outputs.pop_count != '0' && steps.cron.outputs.pop_count != ''
       uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.resolve.outputs.artifact_name }}
@@ -631,7 +670,7 @@ runs:
         if [ "${{ steps.list.outputs.due_count }}" = "0" ]; then
           echo "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\` — total ${{ steps.list.outputs.total_count }}, due 0." | tee -a "$GITHUB_STEP_SUMMARY"
         else
-          echo -e "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\`\n- total: ${{ steps.list.outputs.total_count }}\n- due: ${{ steps.list.outputs.due_count }}\n- fired: ${{ steps.cron.outputs.fired_count }}\n- failed: ${{ steps.cron.outputs.failed_count }}\n- popped: ${{ steps.pop.outputs.popped_count }}\n- remaining: ${{ steps.pop.outputs.remaining_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo -e "🔔 **Cron** at \`${{ steps.resolve.outputs.now }}\`\n- total: ${{ steps.list.outputs.total_count }}\n- due: ${{ steps.list.outputs.due_count }}\n- fired: ${{ steps.cron.outputs.fired_count }}\n- failed: ${{ steps.cron.outputs.failed_count }}\n- undeliverable (dropped): ${{ steps.cron.outputs.undeliverable_count }}\n- popped: ${{ steps.pop.outputs.popped_count }}\n- remaining: ${{ steps.pop.outputs.remaining_count }}" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
 
     - name: Fail if any reminders could not be delivered
